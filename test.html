@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SillyTavern Runtime - EventBus Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .pass {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .fail {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .error {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SillyTavern Runtime - EventBus Test</h1>
+        <p>This page tests the EventBus implementation for the SillyTavern Browser Runtime.</p>
+        
+        <div class="test-section">
+            <h2>Manual Console Testing</h2>
+            <p>Open the browser console and run the following commands:</p>
+            <pre>
+// Test basic event functionality
+const eventBus = new EventBus();
+eventBus.subscribe('test', (data) => console.log('Received:', data));
+eventBus.emit('test', { message: 'Hello World' });
+            </pre>
+            <button onclick="runBasicTest()">Run Basic Test</button>
+        </div>
+
+        <div class="test-section">
+            <h2>Advanced Features Test</h2>
+            <button onclick="runAdvancedTests()">Run Advanced Tests</button>
+            <div id="advanced-results"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Memory Leak Test</h2>
+            <button onclick="runMemoryTest()">Run Memory Test</button>
+            <div id="memory-results"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Statistics</h2>
+            <button onclick="showStats()">Show EventBus Stats</button>
+            <div id="stats-results"></div>
+        </div>
+    </div>
+
+    <script src="src/core/EventBus.js"></script>
+    <script>
+        // Global EventBus instance for testing
+        let testEventBus;
+
+        function runBasicTest() {
+            console.log('=== Running Basic EventBus Test ===');
+            
+            try {
+                testEventBus = new EventBus();
+                let receivedData = null;
+                
+                testEventBus.subscribe('test', (data) => {
+                    receivedData = data;
+                    console.log('Received:', data);
+                });
+                
+                testEventBus.emit('test', { message: 'Hello World' });
+                
+                if (receivedData && receivedData.message === 'Hello World') {
+                    console.log('✓ Basic test PASSED');
+                    showResult('Basic test PASSED', 'pass');
+                } else {
+                    console.log('✗ Basic test FAILED');
+                    showResult('Basic test FAILED', 'fail');
+                }
+            } catch (error) {
+                console.error('✗ Basic test ERROR:', error);
+                showResult(`Basic test ERROR: ${error.message}`, 'error');
+            }
+        }
+
+        function runAdvancedTests() {
+            console.log('=== Running Advanced EventBus Tests ===');
+            const results = [];
+            
+            try {
+                testEventBus = new EventBus();
+                
+                // Test 1: Multiple listeners
+                let count = 0;
+                testEventBus.subscribe('test', () => count++);
+                testEventBus.subscribe('test', () => count++);
+                testEventBus.emit('test', {});
+                
+                if (count === 2) {
+                    results.push('✓ Multiple listeners: PASS');
+                } else {
+                    results.push('✗ Multiple listeners: FAIL');
+                }
+                
+                // Test 2: One-time listeners
+                let onceCount = 0;
+                testEventBus.once('once-test', () => onceCount++);
+                testEventBus.emit('once-test', {});
+                testEventBus.emit('once-test', {});
+                
+                if (onceCount === 1) {
+                    results.push('✓ One-time listeners: PASS');
+                } else {
+                    results.push('✗ One-time listeners: FAIL');
+                }
+                
+                // Test 3: Event history
+                const history = testEventBus.getEventHistory();
+                if (history.length >= 3) {
+                    results.push('✓ Event history: PASS');
+                } else {
+                    results.push('✗ Event history: FAIL');
+                }
+                
+                // Test 4: Namespacing
+                let nsCount = 0;
+                testEventBus.subscribe('ns-test', () => nsCount++, { namespace: 'test-ns' });
+                testEventBus.emit('ns-test', {}, { namespace: 'test-ns' });
+                testEventBus.emit('ns-test', {}, { namespace: 'other-ns' });
+                
+                if (nsCount === 1) {
+                    results.push('✓ Namespacing: PASS');
+                } else {
+                    results.push('✗ Namespacing: FAIL');
+                }
+                
+                showResults(results, 'advanced-results');
+                
+            } catch (error) {
+                console.error('Advanced tests ERROR:', error);
+                showResult(`Advanced tests ERROR: ${error.message}`, 'error', 'advanced-results');
+            }
+        }
+
+        function runMemoryTest() {
+            console.log('=== Running Memory Leak Test ===');
+            const results = [];
+            
+            try {
+                testEventBus = new EventBus();
+                
+                // Test 1: Subscribe and unsubscribe multiple times
+                const callback = () => {};
+                for (let i = 0; i < 10; i++) {
+                    const unsubscribe = testEventBus.subscribe('memory-test', callback);
+                    unsubscribe();
+                }
+                
+                if (testEventBus.listenerCount('memory-test') === 0) {
+                    results.push('✓ Subscribe/unsubscribe cleanup: PASS');
+                } else {
+                    results.push('✗ Subscribe/unsubscribe cleanup: FAIL');
+                }
+                
+                // Test 2: One-time listener cleanup
+                let onceCount = 0;
+                testEventBus.once('once-memory', () => onceCount++);
+                testEventBus.emit('once-memory', {});
+                testEventBus.emit('once-memory', {});
+                
+                if (onceCount === 1 && testEventBus.listenerCount('once-memory') === 0) {
+                    results.push('✓ One-time listener cleanup: PASS');
+                } else {
+                    results.push('✗ One-time listener cleanup: FAIL');
+                }
+                
+                // Test 3: Remove all listeners
+                testEventBus.subscribe('cleanup-test', () => {});
+                testEventBus.subscribe('cleanup-test', () => {});
+                testEventBus.removeAllListeners();
+                
+                if (testEventBus.listenerCount('cleanup-test') === 0) {
+                    results.push('✓ Remove all listeners: PASS');
+                } else {
+                    results.push('✗ Remove all listeners: FAIL');
+                }
+                
+                showResults(results, 'memory-results');
+                
+            } catch (error) {
+                console.error('Memory test ERROR:', error);
+                showResult(`Memory test ERROR: ${error.message}`, 'error', 'memory-results');
+            }
+        }
+
+        function showStats() {
+            console.log('=== EventBus Statistics ===');
+            
+            if (!testEventBus) {
+                testEventBus = new EventBus();
+                testEventBus.subscribe('stats-test', () => {});
+                testEventBus.emit('stats-test', {});
+            }
+            
+            const stats = testEventBus.getStats();
+            console.log('EventBus Stats:', stats);
+            
+            const statsHtml = `
+                <div class="test-result pass">
+                    <h3>EventBus Statistics</h3>
+                    <pre>${JSON.stringify(stats, null, 2)}</pre>
+                </div>
+            `;
+            
+            document.getElementById('stats-results').innerHTML = statsHtml;
+        }
+
+        function showResult(message, type, elementId = 'advanced-results') {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            document.getElementById(elementId).appendChild(div);
+        }
+
+        function showResults(results, elementId) {
+            const container = document.getElementById(elementId);
+            container.innerHTML = '';
+            
+            results.forEach(result => {
+                const type = result.startsWith('✓') ? 'pass' : 'fail';
+                showResult(result, type, elementId);
+            });
+        }
+
+        // Auto-run basic test on page load
+        window.addEventListener('load', () => {
+            console.log('SillyTavern Runtime - EventBus Test Page Loaded');
+            console.log('Run tests using the buttons above or manually in the console');
+        });
+    </script>
+</body>
+</html> 
