@@ -7,6 +7,13 @@
  * - Configuration validation
  * - Runtime configuration updates
  * - Configuration persistence
+ * 
+ * Tests for Task 1.3.2: Configuration Features
+ * - Configuration import/export
+ * - Environment-specific overrides
+ * - Configuration templates
+ * - Hot-reloading support
+ * - Configuration validation schemas
  */
 
 // Import ConfigManager
@@ -506,6 +513,359 @@ database:
                 expect(() => configManager.watch('', () => {})).toThrow('Path must be a non-empty string');
                 expect(() => configManager.watch('path', null)).toThrow('Callback must be a function');
                 expect(() => configManager.watch('path', 'invalid')).toThrow('Callback must be a function');
+            });
+        });
+    });
+
+    describe('Task 1.3.2: Configuration Features', () => {
+        describe('Environment-specific overrides', () => {
+            test('should detect environment automatically', () => {
+                const env = configManager.getEnvironment();
+                expect(['development', 'staging', 'production', 'unknown']).toContain(env);
+            });
+
+            test('should set and apply environment overrides', () => {
+                const overrides = {
+                    server: { port: 9000 },
+                    debug: { enabled: true }
+                };
+
+                configManager.setEnvironmentOverrides('development', overrides);
+                configManager.setEnvironment('development');
+
+                expect(configManager.get('server.port')).toBe(9000);
+                expect(configManager.get('debug.enabled')).toBe(true);
+            });
+
+            test('should emit environment change events', () => {
+                const originalEnvironment = configManager.getEnvironment();
+                configManager.setEnvironment('production');
+
+                const events = mockEventBus.getEvents();
+                expect(events).toHaveLength(1);
+                expect(events[0].eventName).toBe('config:environment-changed');
+                expect(events[0].data.oldEnvironment).toBe(originalEnvironment);
+                expect(events[0].data.newEnvironment).toBe('production');
+            });
+
+            test('should handle invalid environment overrides', () => {
+                expect(() => configManager.setEnvironmentOverrides('', {})).toThrow('Environment must be a non-empty string');
+                expect(() => configManager.setEnvironmentOverrides('dev', null)).toThrow('Overrides must be an object');
+            });
+
+            test('should handle invalid environment setting', () => {
+                expect(() => configManager.setEnvironment('')).toThrow('Environment must be a non-empty string');
+            });
+        });
+
+        describe('Configuration templates', () => {
+            test('should add and retrieve templates', () => {
+                const template = {
+                    server: { port: 8000, host: 'localhost' },
+                    database: { url: 'mongodb://localhost:27017' }
+                };
+
+                configManager.addTemplate('basic', template, 'Basic server configuration');
+
+                const retrieved = configManager.getTemplate('basic');
+                expect(retrieved.config).toEqual(template);
+                expect(retrieved.description).toBe('Basic server configuration');
+                expect(retrieved.createdAt).toBeGreaterThan(0);
+            });
+
+            test('should get all template names', () => {
+                configManager.addTemplate('template1', {});
+                configManager.addTemplate('template2', {});
+
+                const names = configManager.getTemplateNames();
+                expect(names).toContain('template1');
+                expect(names).toContain('template2');
+            });
+
+            test('should apply templates', () => {
+                const template = { server: { port: 8000 } };
+                configManager.addTemplate('test', template);
+
+                const result = configManager.applyTemplate('test');
+                expect(result).toBe(true);
+                expect(configManager.get('server.port')).toBe(8000);
+            });
+
+            test('should apply templates with merge option', () => {
+                configManager.set('existing.setting', 'value');
+                
+                const template = { server: { port: 8000 } };
+                configManager.addTemplate('test', template);
+
+                configManager.applyTemplate('test', { merge: true });
+
+                expect(configManager.get('server.port')).toBe(8000);
+                expect(configManager.get('existing.setting')).toBe('value');
+            });
+
+            test('should remove templates', () => {
+                configManager.addTemplate('test', {});
+                expect(configManager.removeTemplate('test')).toBe(true);
+                expect(configManager.getTemplate('test')).toBeNull();
+            });
+
+            test('should handle invalid template operations', () => {
+                expect(() => configManager.addTemplate('', {})).toThrow('Template name must be a non-empty string');
+                expect(() => configManager.addTemplate('test', null)).toThrow('Template must be an object');
+                expect(() => configManager.applyTemplate('nonexistent')).toThrow('Template \'nonexistent\' not found');
+            });
+        });
+
+        describe('Configuration import/export', () => {
+            test('should export configuration in JSON format', () => {
+                configManager.set('server.port', 8000);
+                configManager.set('server.host', 'localhost');
+
+                const exported = configManager.exportConfig({ format: 'json' });
+                const parsed = JSON.parse(exported);
+
+                expect(parsed.config.server.port).toBe(8000);
+                expect(parsed.config.server.host).toBe('localhost');
+                expect(parsed.metadata.environment).toBeDefined();
+                expect(parsed.metadata.exportedAt).toBeDefined();
+            });
+
+            test('should export configuration in YAML format', () => {
+                configManager.set('server.port', 8000);
+
+                const exported = configManager.exportConfig({ format: 'yaml' });
+                expect(exported).toContain('server:');
+                expect(exported).toContain('port: 8000');
+            });
+
+            test('should export configuration in ENV format', () => {
+                configManager.set('server.port', 8000);
+                configManager.set('server.host', 'localhost');
+
+                const exported = configManager.exportConfig({ format: 'env' });
+                expect(exported).toContain('SERVER_PORT=8000');
+                expect(exported).toContain('SERVER_HOST=localhost');
+            });
+
+            test('should import configuration from JSON format', () => {
+                const jsonData = JSON.stringify({
+                    config: { server: { port: 8000 } },
+                    metadata: { environment: 'test' }
+                });
+
+                const result = configManager.importConfig(jsonData, { format: 'json' });
+                expect(result.server.port).toBe(8000);
+                expect(configManager.get('server.port')).toBe(8000);
+            });
+
+            test('should import configuration from YAML format', () => {
+                const yamlData = `
+server:
+  port: 8000
+  host: localhost
+`;
+
+                const result = configManager.importConfig(yamlData, { format: 'yaml' });
+                expect(result.server.port).toBe(8000);
+                expect(result.server.host).toBe('localhost');
+            });
+
+            test('should import configuration from ENV format', () => {
+                const envData = `
+SERVER_PORT=8000
+SERVER_HOST=localhost
+DATABASE_URL=mongodb://localhost:27017
+`;
+
+                const result = configManager.importConfig(envData, { format: 'env' });
+                expect(result.server.port).toBe(8000);
+                expect(result.server.host).toBe('localhost');
+                expect(result.database.url).toBe('mongodb://localhost:27017');
+            });
+
+            test('should handle import with merge option', () => {
+                configManager.set('existing.setting', 'value');
+
+                const jsonData = JSON.stringify({ server: { port: 8000 } });
+                configManager.importConfig(jsonData, { format: 'json', merge: true });
+
+                expect(configManager.get('server.port')).toBe(8000);
+                expect(configManager.get('existing.setting')).toBe('value');
+            });
+
+            test('should handle invalid import data', () => {
+                expect(() => configManager.importConfig('', { format: 'json' })).toThrow('Import data must be a non-empty string');
+                expect(() => configManager.importConfig('invalid json', { format: 'json' })).toThrow('Invalid JSON format');
+            });
+
+            test('should handle unsupported export format', () => {
+                expect(() => configManager.exportConfig({ format: 'xml' })).toThrow('Unsupported export format');
+            });
+
+            test('should handle unsupported import format', () => {
+                expect(() => configManager.importConfig('data', { format: 'xml' })).toThrow('Unsupported import format');
+            });
+
+            test('should track import/export history', () => {
+                configManager.set('server.port', 8000);
+                configManager.exportConfig({ format: 'json' });
+
+                const history = configManager.getImportExportHistory();
+                expect(history).toHaveLength(1);
+                expect(history[0].operation).toBe('export');
+                expect(history[0].format).toBe('json');
+            });
+
+            test('should clear import/export history', () => {
+                configManager.set('server.port', 8000);
+                configManager.exportConfig({ format: 'json' });
+
+                configManager.clearImportExportHistory();
+                const history = configManager.getImportExportHistory();
+                expect(history).toHaveLength(0);
+            });
+        });
+
+        describe('Configuration validation schemas', () => {
+            test('should add and remove validation schemas', () => {
+                const schema = { type: 'number', minimum: 1, maximum: 65535 };
+                configManager.addValidationSchema('server.port', schema);
+
+                expect(configManager.removeValidationSchema('server.port')).toBe(true);
+                expect(configManager.removeValidationSchema('nonexistent')).toBe(false);
+            });
+
+            test('should validate against schemas', () => {
+                const schema = { type: 'number', minimum: 1, maximum: 65535 };
+                configManager.addValidationSchema('server.port', schema);
+                configManager.set('server.port', 8000);
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(true);
+                expect(result.errors).toHaveLength(0);
+            });
+
+            test('should detect schema validation errors', () => {
+                const schema = { type: 'number', minimum: 1, maximum: 65535 };
+                configManager.addValidationSchema('server.port', schema);
+                configManager.set('server.port', 70000); // Invalid value
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(false);
+                expect(result.errors).toHaveLength(1);
+                expect(result.errors[0].path).toBe('server.port');
+            });
+
+            test('should validate string schemas', () => {
+                const schema = { type: 'string', minLength: 1, maxLength: 50 };
+                configManager.addValidationSchema('server.host', schema);
+                configManager.set('server.host', 'localhost');
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(true);
+            });
+
+            test('should validate object schemas with required fields', () => {
+                const schema = { 
+                    type: 'object', 
+                    required: ['name', 'port'],
+                    properties: {
+                        name: { type: 'string' },
+                        port: { type: 'number' }
+                    }
+                };
+                configManager.addValidationSchema('server', schema);
+                configManager.set('server.name', 'test');
+                configManager.set('server.port', 8000);
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(true);
+            });
+
+            test('should validate enum values', () => {
+                const schema = { type: 'string', enum: ['development', 'staging', 'production'] };
+                configManager.addValidationSchema('environment', schema);
+                configManager.set('environment', 'development');
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(true);
+            });
+
+            test('should validate pattern matching', () => {
+                const schema = { type: 'string', pattern: '^[a-z]+$' };
+                configManager.addValidationSchema('server.host', schema);
+                configManager.set('server.host', 'localhost');
+
+                const result = configManager.validateWithSchemas(configManager.getConfig());
+                expect(result.valid).toBe(true);
+            });
+
+            test('should handle invalid schema operations', () => {
+                expect(() => configManager.addValidationSchema('', {})).toThrow('Path must be a non-empty string');
+                expect(() => configManager.addValidationSchema('path', null)).toThrow('Schema must be an object');
+            });
+        });
+
+        describe('Hot-reloading support', () => {
+            test('should enable and disable hot-reloading', () => {
+                configManager.setHotReloadEnabled(false);
+                expect(configManager.isHotReloadEnabled()).toBe(false);
+
+                configManager.setHotReloadEnabled(true);
+                expect(configManager.isHotReloadEnabled()).toBe(true);
+            });
+
+            test('should hot-reload configuration from file', async () => {
+                const jsonConfig = { server: { port: 9000 } };
+                fetch.mockResolvedValueOnce({
+                    ok: true,
+                    text: () => Promise.resolve(JSON.stringify(jsonConfig))
+                });
+
+                const result = await configManager.hotReload('config.json');
+                expect(result.server.port).toBe(9000);
+                expect(configManager.get('server.port')).toBe(9000);
+            });
+
+            test('should emit hot-reload events', async () => {
+                const jsonConfig = { server: { port: 9000 } };
+                fetch.mockResolvedValueOnce({
+                    ok: true,
+                    text: () => Promise.resolve(JSON.stringify(jsonConfig))
+                });
+
+                await configManager.hotReload('config.json');
+
+                const events = mockEventBus.getEvents();
+                expect(events).toHaveLength(2); // config:loaded + config:hot-reloaded
+                const hotReloadEvent = events.find(e => e.eventName === 'config:hot-reloaded');
+                expect(hotReloadEvent).toBeDefined();
+                expect(hotReloadEvent.data.filePath).toBe('config.json');
+            });
+
+            test('should prevent hot-reloading when disabled', async () => {
+                configManager.setHotReloadEnabled(false);
+
+                await expect(configManager.hotReload('config.json')).rejects.toThrow('Hot-reloading is disabled');
+            });
+        });
+
+        describe('Enhanced statistics', () => {
+            test('should include Task 1.3.2 statistics', () => {
+                configManager.set('server.port', 8000);
+                configManager.addTemplate('test', {});
+                configManager.addValidationSchema('server.port', { type: 'number' });
+                configManager.setEnvironmentOverrides('development', {});
+                configManager.exportConfig({ format: 'json' });
+
+                const stats = configManager.getStats();
+
+                expect(stats.environment).toBeDefined();
+                expect(stats.templatesCount).toBe(1);
+                expect(stats.validationSchemasCount).toBe(1);
+                expect(stats.hotReloadEnabled).toBe(true);
+                expect(stats.importExportHistorySize).toBe(1);
+                expect(stats.environmentOverridesCount).toBe(1);
             });
         });
     });

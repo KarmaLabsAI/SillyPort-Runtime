@@ -452,9 +452,9 @@ external/
 internal/
 .int/
 
-# Core
-core/
-.core/
+# Core (exclude only root-level core directories, not src/core or tests/core)
+/core/
+/.core/
 
 # Base
 base/
