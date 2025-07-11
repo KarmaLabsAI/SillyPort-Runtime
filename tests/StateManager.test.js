@@ -7,6 +7,12 @@
  * - setState/getState methods
  * - State validation and type checking
  * - State change notifications via EventBus
+ * - Reactive state updates (Task 1.2.2)
+ *   - Subscription system for state changes
+ *   - Selective updates (only notify relevant subscribers)
+ *   - Batch update support
+ *   - State rollback functionality
+ *   - State comparison and diff detection
  */
 
 const EventBus = require('../src/core/EventBus');
@@ -269,6 +275,274 @@ describe('StateManager', () => {
         });
     });
 
+    describe('Reactive State Updates (Task 1.2.2)', () => {
+        describe('Batch Update Support', () => {
+            test('should support batch updates', async () => {
+                const callback1 = jest.fn();
+                const callback2 = jest.fn();
+                const batchCallback = jest.fn();
+                
+                stateManager.subscribe('ui.theme', callback1);
+                stateManager.subscribe('ui.sidebarOpen', callback2);
+                eventBus.subscribe('state:batch', batchCallback);
+                
+                await stateManager.batchUpdate(() => {
+                    stateManager.setState('ui.theme', 'dark');
+                    stateManager.setState('ui.sidebarOpen', false);
+                    stateManager.setState('ui.loading', true);
+                });
+                
+                // Individual callbacks should be called
+                expect(callback1).toHaveBeenCalledWith('dark', 'default', 'ui.theme');
+                expect(callback2).toHaveBeenCalledWith(false, true, 'ui.sidebarOpen');
+                
+                // Batch event should be emitted
+                expect(batchCallback).toHaveBeenCalledWith({
+                    updates: expect.arrayContaining([
+                        expect.objectContaining({ path: 'ui.theme', newValue: 'dark' }),
+                        expect.objectContaining({ path: 'ui.sidebarOpen', newValue: false }),
+                        expect.objectContaining({ path: 'ui.loading', newValue: true })
+                    ]),
+                    timestamp: expect.any(Number)
+                });
+                
+                // State should be updated
+                expect(stateManager.getState('ui.theme')).toBe('dark');
+                expect(stateManager.getState('ui.sidebarOpen')).toBe(false);
+                expect(stateManager.getState('ui.loading')).toBe(true);
+            });
+
+            test('should prevent nested batch updates', async () => {
+                await expect(async () => {
+                    await stateManager.batchUpdate(async () => {
+                        await stateManager.batchUpdate(() => {});
+                    });
+                }).rejects.toThrow('StateManager: Already in batch mode');
+            });
+
+            test('should handle errors in batch updates', async () => {
+                await expect(async () => {
+                    await stateManager.batchUpdate(() => {
+                        throw new Error('Batch error');
+                    });
+                }).rejects.toThrow('Batch error');
+                
+                // Batch mode should be cleared
+                expect(stateManager.batchMode).toBe(false);
+            });
+        });
+
+        describe('State Rollback Functionality', () => {
+            test('should create checkpoints', () => {
+                const checkpointId = stateManager.createCheckpoint('test-checkpoint');
+                
+                expect(checkpointId).toMatch(/^checkpoint_\d+_[a-z0-9]+$/);
+                expect(stateManager.rollbackStack).toHaveLength(1);
+                expect(stateManager.rollbackStack[0].label).toBe('test-checkpoint');
+            });
+
+            test('should rollback to previous state', () => {
+                // Set initial state
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.createCheckpoint('initial');
+                
+                // Make changes
+                stateManager.setState('ui.theme', 'light');
+                stateManager.setState('ui.sidebarOpen', false);
+                
+                // Rollback
+                const success = stateManager.rollback(1);
+                
+                expect(success).toBe(true);
+                expect(stateManager.getState('ui.theme')).toBe('dark');
+                expect(stateManager.getState('ui.sidebarOpen')).toBe(true); // Back to default
+            });
+
+            test('should rollback by checkpoint ID', () => {
+                stateManager.setState('ui.theme', 'dark');
+                const checkpointId = stateManager.createCheckpoint('test');
+                
+                stateManager.setState('ui.theme', 'light');
+                
+                // Rollback using checkpoint ID
+                const success = stateManager.rollback(checkpointId);
+                
+                expect(success).toBe(true);
+                expect(stateManager.getState('ui.theme')).toBe('dark');
+            });
+
+            test('should rollback by checkpoint label', () => {
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.createCheckpoint('test-label');
+                
+                stateManager.setState('ui.theme', 'light');
+                
+                // Rollback using label
+                const success = stateManager.rollback('test-label');
+                
+                expect(success).toBe(true);
+                expect(stateManager.getState('ui.theme')).toBe('dark');
+            });
+
+            test('should handle invalid rollback attempts', () => {
+                expect(stateManager.rollback(1)).toBe(false);
+                expect(stateManager.rollback(0)).toBe(false);
+                expect(stateManager.rollback(-1)).toBe(false);
+                expect(stateManager.rollback('nonexistent')).toBe(false);
+            });
+
+            test('should limit rollback stack size', () => {
+                stateManager.maxRollbackStack = 2;
+                
+                stateManager.createCheckpoint('1');
+                stateManager.createCheckpoint('2');
+                stateManager.createCheckpoint('3');
+                
+                expect(stateManager.rollbackStack).toHaveLength(2);
+                expect(stateManager.rollbackStack[0].label).toBe('2');
+                expect(stateManager.rollbackStack[1].label).toBe('3');
+            });
+        });
+
+        describe('State Comparison and Diff Detection', () => {
+            test('should compute diff between states', () => {
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.createCheckpoint('before');
+                
+                stateManager.setState('ui.theme', 'light');
+                stateManager.setState('ui.sidebarOpen', false);
+                stateManager.setState('new.property', 'value');
+                
+                const diff = stateManager.getDiff(1);
+                
+                expect(diff).toEqual({
+                    added: {
+                        'new': { 'property': 'value' }
+                    },
+                    modified: {
+                        'ui.theme': { old: 'dark', new: 'light' },
+                        'ui.sidebarOpen': { old: true, new: false }
+                    },
+                    removed: {}
+                });
+            });
+
+            test('should compute diff between arbitrary states', () => {
+                const state1 = { a: 1, b: { c: 2 } };
+                const state2 = { a: 2, b: { c: 3, d: 4 }, e: 5 };
+                
+                const diff = stateManager.getDiffBetween(state1, state2);
+                
+                expect(diff).toEqual({
+                    added: {
+                        'b.d': 4,
+                        'e': 5
+                    },
+                    modified: {
+                        'a': { old: 1, new: 2 },
+                        'b.c': { old: 2, new: 3 }
+                    },
+                    removed: {}
+                });
+            });
+
+            test('should handle complex nested diffs', () => {
+                const state1 = {
+                    characters: {
+                        char1: { name: 'Alice', tags: ['hero'] },
+                        char2: { name: 'Bob', tags: ['villain'] }
+                    }
+                };
+                
+                const state2 = {
+                    characters: {
+                        char1: { name: 'Alice', tags: ['hero', 'leader'] },
+                        char3: { name: 'Charlie', tags: ['neutral'] }
+                    }
+                };
+                
+                const diff = stateManager.getDiffBetween(state1, state2);
+                
+                expect(diff.added).toHaveProperty('characters.char3');
+                expect(diff.modified).toHaveProperty('characters.char1.tags');
+                expect(diff.removed).toHaveProperty('characters.char2');
+                
+                // Verify the actual structure
+                expect(diff.added['characters.char3']).toEqual({ name: 'Charlie', tags: ['neutral'] });
+                expect(diff.modified['characters.char1.tags']).toEqual({ old: ['hero'], new: ['hero', 'leader'] });
+                expect(diff.removed['characters.char2']).toEqual({ name: 'Bob', tags: ['villain'] });
+            });
+
+            test('should return null for invalid diff targets', () => {
+                expect(stateManager.getDiff('nonexistent')).toBeNull();
+                expect(stateManager.getDiff(999)).toBeNull();
+                expect(stateManager.getDiff(-1)).toBeNull();
+            });
+        });
+
+        describe('Selective Updates with Filtering', () => {
+            test('should subscribe with filter function', () => {
+                const callback = jest.fn();
+                
+                const unsubscribe = stateManager.subscribeWithFilter(
+                    'ui.theme',
+                    callback,
+                    {
+                        filter: (newValue, oldValue) => newValue !== oldValue && newValue === 'dark'
+                    }
+                );
+                
+                // Should not trigger (same value)
+                stateManager.setState('ui.theme', 'default');
+                expect(callback).not.toHaveBeenCalled();
+                
+                // Should not trigger (filter condition not met)
+                stateManager.setState('ui.theme', 'light');
+                expect(callback).not.toHaveBeenCalled();
+                
+                // Should trigger (filter condition met)
+                stateManager.setState('ui.theme', 'dark');
+                expect(callback).toHaveBeenCalledWith('dark', 'light', 'ui.theme');
+                
+                unsubscribe();
+            });
+
+            test('should subscribe to multiple paths', () => {
+                const callback = jest.fn();
+                
+                const unsubscribe = stateManager.subscribeWithFilter(
+                    ['ui.theme', 'ui.sidebarOpen'],
+                    callback
+                );
+                
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.setState('ui.sidebarOpen', false);
+                
+                expect(callback).toHaveBeenCalledTimes(2);
+                expect(callback).toHaveBeenCalledWith('dark', 'default', 'ui.theme');
+                expect(callback).toHaveBeenCalledWith(false, true, 'ui.sidebarOpen');
+                
+                unsubscribe();
+            });
+
+            test('should unsubscribe from all paths', () => {
+                const callback = jest.fn();
+                
+                const unsubscribe = stateManager.subscribeWithFilter(
+                    ['ui.theme', 'ui.sidebarOpen'],
+                    callback
+                );
+                
+                unsubscribe();
+                
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.setState('ui.sidebarOpen', false);
+                
+                expect(callback).not.toHaveBeenCalled();
+            });
+        });
+    });
+
     describe('State History', () => {
         test('should record state changes in history', () => {
             stateManager.setState('ui.theme', 'dark');
@@ -304,6 +578,18 @@ describe('StateManager', () => {
             
             stateManager.clearHistory();
             expect(stateManager.getHistory()).toHaveLength(0);
+        });
+
+        test('should record batch changes in history', async () => {
+            await stateManager.batchUpdate(() => {
+                stateManager.setState('ui.theme', 'dark');
+                stateManager.setState('ui.sidebarOpen', false);
+            });
+            
+            const history = stateManager.getHistory();
+            expect(history).toHaveLength(1);
+            expect(history[0].type).toBe('batch');
+            expect(history[0].updates).toHaveLength(2);
         });
     });
 
@@ -428,6 +714,7 @@ describe('StateManager', () => {
             stateManager.subscribe('path2', () => {});
             stateManager.addValidationRule('test.path', () => true);
             stateManager.setState('test.value', 'value');
+            stateManager.createCheckpoint('test');
             
             const stats = stateManager.getStats();
             
@@ -437,6 +724,10 @@ describe('StateManager', () => {
             expect(stats.maxHistorySize).toBe(50);
             expect(stats.debugMode).toBe(false);
             expect(stats.stateSize).toBeGreaterThan(0);
+            expect(stats.batchMode).toBe(false);
+            expect(stats.rollbackStackSize).toBe(1);
+            expect(stats.maxRollbackStack).toBe(20);
+            expect(stats.diffCacheSize).toBe(0);
         });
     });
 
