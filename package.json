@@ -1,0 +1,39 @@
+{
+  "name": "sillyport-runtime",
+  "version": "1.0.0",
+  "description": "SillyTavern Browser Runtime - A browser-based runtime for SillyTavern character management and chat functionality",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "build": "echo 'Build process not yet implemented'",
+    "dev": "echo 'Development server not yet implemented'"
+  },
+  "keywords": [
+    "sillytavern",
+    "browser",
+    "runtime",
+    "character",
+    "chat",
+    "ai"
+  ],
+  "author": "KarmaLabsAI",
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KarmaLabsAI/SillyPort-Runtime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KarmaLabsAI/SillyPort-Runtime/issues"
+  },
+  "homepage": "https://github.com/KarmaLabsAI/SillyPort-Runtime#readme"
+} 
