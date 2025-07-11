@@ -11,13 +11,18 @@ const ConfigManager = require('./core/ConfigManager');
 const StorageManager = require('./core/StorageManager');
 const SillyTavernRuntime = require('./core/SillyTavernRuntime');
 
+// Character components
+const { CharacterCard, PNGMetadataExtractor } = require('./character');
+
 // Export main runtime class
 module.exports = {
     SillyTavernRuntime,
     EventBus,
     StateManager,
     ConfigManager,
-    StorageManager
+    StorageManager,
+    CharacterCard,
+    PNGMetadataExtractor
 };
 
 // For browser environments, also attach to window
@@ -28,6 +33,8 @@ if (typeof window !== 'undefined') {
         EventBus,
         StateManager,
         ConfigManager,
-        StorageManager
+        StorageManager,
+        CharacterCard,
+        PNGMetadataExtractor
     };
 } 
