@@ -747,3 +747,541 @@ describe('StorageManager', () => {
         });
     });
 }); 
+
+describe('Task 1.4.2: Storage Features', () => {
+    let storage;
+    let mockEventBus;
+
+    beforeEach(() => {
+        mockEventBus = {
+            emit: jest.fn(),
+            on: jest.fn(),
+            off: jest.fn()
+        };
+        storage = new StorageManager(mockEventBus);
+    });
+
+    afterEach(async () => {
+        if (storage.initialized) {
+            await storage.close();
+        }
+        jest.clearAllMocks();
+    });
+
+    describe('Data Compression', () => {
+        test('should compress large data automatically', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 100 // Low threshold for testing
+            });
+
+            const largeData = { 
+                content: 'x'.repeat(200), // 200 bytes, above threshold
+                timestamp: Date.now() 
+            };
+
+            const key = await storage.save('test', largeData);
+            const loaded = await storage.load('test', key);
+
+            expect(loaded).toEqual(largeData);
+            expect(mockEventBus.emit).toHaveBeenCalledWith(
+                'storage:saved',
+                expect.objectContaining({
+                    compressed: true,
+                    originalSize: expect.any(Number),
+                    compressedSize: expect.any(Number)
+                })
+            );
+        });
+
+        test('should not compress small data', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 1000
+            });
+
+            const smallData = { content: 'small', timestamp: Date.now() };
+
+            const key = await storage.save('test', smallData);
+            const loaded = await storage.load('test', key);
+
+            expect(loaded).toEqual(smallData);
+            expect(mockEventBus.emit).toHaveBeenCalledWith(
+                'storage:saved',
+                expect.objectContaining({
+                    compressed: false
+                })
+            );
+        });
+
+        test('should handle compression failures gracefully', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 100
+            });
+
+            // Mock compression to fail
+            const originalCompress = storage.compressData;
+            storage.compressData = jest.fn().mockRejectedValue(new Error('Compression failed'));
+
+            const data = { content: 'x'.repeat(200) };
+            const key = await storage.save('test', data);
+            const loaded = await storage.load('test', key);
+
+            expect(loaded).toEqual(data);
+            expect(mockEventBus.emit).toHaveBeenCalledWith(
+                'storage:saved',
+                expect.objectContaining({
+                    compressed: false
+                })
+            );
+
+            // Restore original method
+            storage.compressData = originalCompress;
+        });
+
+        test('should decompress data correctly', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 100
+            });
+
+            const originalData = { 
+                content: 'x'.repeat(200),
+                nested: { value: 'test' }
+            };
+
+            const key = await storage.save('test', originalData);
+            const loaded = await storage.load('test', key);
+
+            expect(loaded).toEqual(originalData);
+        });
+    });
+
+    describe('Storage Quota Management', () => {
+        test('should check storage quota before saving', async () => {
+            await storage.init({
+                maxStorageQuota: 1024 * 1024 // 1MB
+            });
+
+            // Mock storage estimate
+            const mockEstimate = {
+                usage: 900 * 1024, // 900KB
+                quota: 1024 * 1024 // 1MB
+            };
+
+            Object.defineProperty(navigator, 'storage', {
+                value: {
+                    estimate: jest.fn().mockResolvedValue(mockEstimate)
+                },
+                writable: true
+            });
+
+            const data = { content: 'test' };
+            await storage.save('test', data);
+
+            expect(navigator.storage.estimate).toHaveBeenCalled();
+        });
+
+        test('should run cleanup when quota is exceeded', async () => {
+            await storage.init({
+                maxStorageQuota: 1024 * 1024
+            });
+
+            // Mock storage estimate to trigger cleanup
+            const mockEstimate = {
+                usage: 950 * 1024, // 95% of quota
+                quota: 1024 * 1024
+            };
+
+            Object.defineProperty(navigator, 'storage', {
+                value: {
+                    estimate: jest.fn().mockResolvedValue(mockEstimate)
+                },
+                writable: true
+            });
+
+            // Mock cleanup method
+            const cleanupSpy = jest.spyOn(storage, 'runCleanup').mockResolvedValue({ cleaned: 0, errors: 0 });
+
+            const data = { content: 'test' };
+            await storage.save('test', data);
+
+            expect(cleanupSpy).toHaveBeenCalled();
+        });
+
+        test('should get storage usage statistics', async () => {
+            await storage.init();
+
+            const mockEstimate = {
+                usage: 500 * 1024,
+                quota: 1024 * 1024
+            };
+
+            Object.defineProperty(navigator, 'storage', {
+                value: {
+                    estimate: jest.fn().mockResolvedValue(mockEstimate)
+                },
+                writable: true
+            });
+
+            const usage = await storage.getStorageUsage();
+
+            expect(usage).toEqual({
+                usage: 500 * 1024,
+                quota: 1024 * 1024,
+                usagePercent: 50
+            });
+        });
+    });
+
+    describe('Automatic Cleanup Routines', () => {
+        test('should start cleanup routine on initialization', async () => {
+            const startCleanupSpy = jest.spyOn(storage, 'startCleanupRoutine');
+            
+            await storage.init();
+
+            expect(startCleanupSpy).toHaveBeenCalled();
+        });
+
+        test('should stop cleanup routine on close', async () => {
+            await storage.init();
+            
+            const stopCleanupSpy = jest.spyOn(storage, 'stopCleanupRoutine');
+            
+            await storage.close();
+
+            expect(stopCleanupSpy).toHaveBeenCalled();
+        });
+
+        test('should run cleanup with default options', async () => {
+            await storage.init();
+
+            // Add some test data
+            await storage.save('test', { content: 'old', timestamp: Date.now() - 31 * 24 * 60 * 60 * 1000 }); // 31 days old
+            await storage.save('test', { content: 'new', timestamp: Date.now() }); // current
+
+            const results = await storage.runCleanup();
+
+            expect(results).toEqual(expect.objectContaining({
+                cleaned: expect.any(Number),
+                errors: expect.any(Number)
+            }));
+        });
+
+        test('should clean up expired cache entries', async () => {
+            await storage.init();
+
+            // Add expired cache entry
+            await storage.save('cache', {
+                key: 'expired',
+                data: 'test',
+                expiresAt: Date.now() - 1000 // expired
+            });
+
+            const results = await storage.runCleanup({ cleanupExpired: true });
+
+            expect(results.cleaned).toBeGreaterThan(0);
+        });
+
+        test('should emit cleanup events', async () => {
+            await storage.init();
+
+            await storage.runCleanup();
+
+            expect(mockEventBus.emit).toHaveBeenCalledWith(
+                'storage:cleanup-completed',
+                expect.objectContaining({
+                    cleaned: expect.any(Number),
+                    errors: expect.any(Number)
+                })
+            );
+        });
+    });
+
+    describe('Backup and Restore Functionality', () => {
+        test('should create backup of all data', async () => {
+            await storage.init();
+
+            // Add test data
+            await storage.save('characters', { id: 'char1', name: 'Test Character' });
+            await storage.save('chats', { id: 'chat1', title: 'Test Chat' });
+
+            const backup = await storage.createBackup();
+
+            expect(backup).toEqual(expect.objectContaining({
+                version: expect.any(Number),
+                timestamp: expect.any(Number),
+                dbName: storage.dbName,
+                dbVersion: storage.version,
+                data: expect.objectContaining({
+                    characters: expect.any(Array),
+                    chats: expect.any(Array)
+                })
+            }));
+        });
+
+        test('should create backup with metadata', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 1024,
+                maxStorageQuota: 50 * 1024 * 1024
+            });
+
+            const backup = await storage.createBackup({ includeMetadata: true });
+
+            expect(backup.metadata).toEqual({
+                compressionEnabled: true,
+                compressionThreshold: 1024,
+                maxStorageQuota: 50 * 1024 * 1024,
+                objectStores: expect.any(Array)
+            });
+        });
+
+        test('should restore backup successfully', async () => {
+            await storage.init();
+
+            // Create backup
+            await storage.save('characters', { id: 'char1', name: 'Test Character' });
+            const backup = await storage.createBackup();
+
+            // Clear storage
+            await storage.clear('characters');
+
+            // Restore backup
+            const results = await storage.restoreBackup(backup);
+
+            expect(results).toEqual(expect.objectContaining({
+                restored: expect.any(Number),
+                errors: 0,
+                migrated: 0
+            }));
+
+            // Verify data was restored
+            const restored = await storage.load('characters', 'char1');
+            expect(restored).toEqual({ id: 'char1', name: 'Test Character' });
+        });
+
+        test('should restore backup with clear existing option', async () => {
+            await storage.init();
+
+            // Add initial data
+            await storage.save('characters', { id: 'old', name: 'Old Character' });
+
+            // Create backup with different data
+            const backup = {
+                version: 1,
+                timestamp: Date.now(),
+                dbName: storage.dbName,
+                dbVersion: storage.version,
+                data: {
+                    characters: [{ id: 'new', name: 'New Character' }]
+                }
+            };
+
+            const results = await storage.restoreBackup(backup, { clearExisting: true });
+
+            expect(results.restored).toBe(1);
+
+            // Old data should be gone
+            const oldData = await storage.load('characters', 'old');
+            expect(oldData).toBeNull();
+
+            // New data should be present
+            const newData = await storage.load('characters', 'new');
+            expect(newData).toEqual({ id: 'new', name: 'New Character' });
+        });
+
+        test('should restore specific stores only', async () => {
+            await storage.init();
+
+            // Create backup with multiple stores
+            await storage.save('characters', { id: 'char1', name: 'Character' });
+            await storage.save('chats', { id: 'chat1', title: 'Chat' });
+            const backup = await storage.createBackup();
+
+            // Clear storage
+            await storage.clear('characters');
+            await storage.clear('chats');
+
+            // Restore only characters
+            const results = await storage.restoreBackup(backup, { stores: ['characters'] });
+
+            expect(results.restored).toBe(1);
+
+            // Characters should be restored
+            const character = await storage.load('characters', 'char1');
+            expect(character).toEqual({ id: 'char1', name: 'Character' });
+
+            // Chats should still be empty
+            const chat = await storage.load('chats', 'chat1');
+            expect(chat).toBeNull();
+        });
+
+        test('should handle backup errors gracefully', async () => {
+            await storage.init();
+
+            const invalidBackup = { invalid: 'data' };
+
+            await expect(storage.restoreBackup(invalidBackup)).rejects.toThrow('Invalid backup data');
+        });
+
+        test('should export backup to blob', async () => {
+            await storage.init();
+            await storage.save('test', { content: 'test' });
+
+            const blob = await storage.exportBackup();
+
+            expect(blob).toBeInstanceOf(Blob);
+            expect(blob.type).toBe('application/json');
+
+            const text = await blob.text();
+            const backup = JSON.parse(text);
+            expect(backup.data.test).toBeDefined();
+        });
+
+        test('should import backup from blob', async () => {
+            await storage.init();
+
+            const backup = {
+                version: 1,
+                timestamp: Date.now(),
+                dbName: storage.dbName,
+                dbVersion: storage.version,
+                data: {
+                    test: [{ id: 'test1', content: 'test content' }]
+                }
+            };
+
+            const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+            const results = await storage.importBackup(blob);
+
+            expect(results.restored).toBe(1);
+        });
+    });
+
+    describe('Storage Migration Support', () => {
+        test('should migrate data between versions', async () => {
+            await storage.init();
+
+            const oldData = [
+                { id: '1', content: 'old content' },
+                { id: '2', content: 'old content 2' }
+            ];
+
+            const migratedData = await storage.migrateData(oldData, 1, 2);
+
+            expect(migratedData).toEqual([
+                { id: '1', content: 'old content', version: 2, migratedAt: expect.any(Number) },
+                { id: '2', content: 'old content 2', version: 2, migratedAt: expect.any(Number) }
+            ]);
+        });
+
+        test('should handle no migration needed', async () => {
+            await storage.init();
+
+            const data = [{ id: '1', content: 'test' }];
+            const migratedData = await storage.migrateData(data, 2, 2);
+
+            expect(migratedData).toEqual(data);
+        });
+
+        test('should apply multiple migrations in sequence', async () => {
+            await storage.init();
+
+            const originalData = [{ id: '1', content: 'original' }];
+            const migratedData = await storage.migrateData(originalData, 1, 3);
+
+            expect(migratedData[0]).toEqual(expect.objectContaining({
+                version: 3,
+                migratedAt: expect.any(Number)
+            }));
+        });
+
+        test('should restore backup with migration', async () => {
+            await storage.init();
+
+            const oldBackup = {
+                version: 1,
+                timestamp: Date.now(),
+                dbName: storage.dbName,
+                dbVersion: storage.version,
+                data: {
+                    test: [{ id: '1', content: 'old content' }]
+                }
+            };
+
+            const results = await storage.restoreBackup(oldBackup);
+
+            expect(results.migrated).toBe(1);
+        });
+    });
+
+    describe('Integration Tests', () => {
+        test('should handle compression with quota management', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 100,
+                maxStorageQuota: 1024 * 1024
+            });
+
+            // Mock storage estimate
+            Object.defineProperty(navigator, 'storage', {
+                value: {
+                    estimate: jest.fn().mockResolvedValue({
+                        usage: 900 * 1024,
+                        quota: 1024 * 1024
+                    })
+                },
+                writable: true
+            });
+
+            const largeData = { content: 'x'.repeat(200) };
+            const key = await storage.save('test', largeData);
+            const loaded = await storage.load('test', key);
+
+            expect(loaded).toEqual(largeData);
+        });
+
+        test('should handle backup with compressed data', async () => {
+            await storage.init({
+                compressionEnabled: true,
+                compressionThreshold: 100
+            });
+
+            const largeData = { content: 'x'.repeat(200) };
+            await storage.save('test', largeData);
+
+            const backup = await storage.createBackup();
+            await storage.clear('test');
+            const results = await storage.restoreBackup(backup);
+
+            expect(results.restored).toBe(1);
+
+            const restored = await storage.getAll('test');
+            expect(restored[0].content).toBe('x'.repeat(200));
+        });
+
+        test('should handle cleanup with backup', async () => {
+            await storage.init();
+
+            // Add old data
+            await storage.save('test', { 
+                content: 'old', 
+                timestamp: Date.now() - 31 * 24 * 60 * 60 * 1000 
+            });
+
+            // Create backup
+            const backup = await storage.createBackup();
+
+            // Run cleanup
+            const cleanupResults = await storage.runCleanup();
+
+            expect(cleanupResults.cleaned).toBeGreaterThan(0);
+
+            // Restore backup should work
+            const restoreResults = await storage.restoreBackup(backup);
+            expect(restoreResults.restored).toBeGreaterThan(0);
+        });
+    });
+}); 

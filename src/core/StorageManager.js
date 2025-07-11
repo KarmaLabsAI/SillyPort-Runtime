@@ -16,6 +16,14 @@ class StorageManager {
         this.initialized = false;
         this.maxRetries = 3;
         this.retryDelay = 1000; // 1 second
+        
+        // Task 1.4.2: Storage Features
+        this.compressionEnabled = true;
+        this.compressionThreshold = 1024; // 1KB
+        this.cleanupInterval = 24 * 60 * 60 * 1000; // 24 hours
+        this.maxStorageQuota = 50 * 1024 * 1024; // 50MB
+        this.cleanupTimer = null;
+        this.migrationVersion = 1;
     }
 
     /**
@@ -24,17 +32,26 @@ class StorageManager {
      * @param {string} options.dbName - Database name
      * @param {number} options.version - Database version
      * @param {Array} options.objectStores - Object store configurations
+     * @param {boolean} options.compressionEnabled - Enable data compression
+     * @param {number} options.compressionThreshold - Compression threshold in bytes
+     * @param {number} options.maxStorageQuota - Maximum storage quota in bytes
      * @returns {Promise<boolean>} Success status
      */
     async init(options = {}) {
         const { 
             dbName = this.dbName, 
             version = this.version,
-            objectStores = this.getDefaultObjectStores()
+            objectStores = this.getDefaultObjectStores(),
+            compressionEnabled = this.compressionEnabled,
+            compressionThreshold = this.compressionThreshold,
+            maxStorageQuota = this.maxStorageQuota
         } = options;
 
         this.dbName = dbName;
         this.version = version;
+        this.compressionEnabled = compressionEnabled;
+        this.compressionThreshold = compressionThreshold;
+        this.maxStorageQuota = maxStorageQuota;
 
         try {
             if (this.debugMode) {
@@ -54,10 +71,15 @@ class StorageManager {
             
             this.initialized = true;
 
+            // Start automatic cleanup
+            this.startCleanupRoutine();
+
             this.emitStorageEvent('storage:initialized', { 
                 dbName: this.dbName, 
                 version: this.version,
-                objectStores: Array.from(this.objectStores.keys())
+                objectStores: Array.from(this.objectStores.keys()),
+                compressionEnabled: this.compressionEnabled,
+                maxStorageQuota: this.maxStorageQuota
             });
 
             if (this.debugMode) {
@@ -244,15 +266,16 @@ class StorageManager {
     }
 
     /**
-     * Save data to an object store
+     * Save data to an object store with compression support
      * @param {string} storeName - Object store name
      * @param {Object} data - Data to save
      * @param {Object} options - Save options
      * @param {boolean} options.overwrite - Whether to overwrite existing data
+     * @param {boolean} options.compress - Force compression (overrides threshold)
      * @returns {Promise<string>} Saved data key
      */
     async save(storeName, data, options = {}) {
-        const { overwrite = true } = options;
+        const { overwrite = true, compress = null } = options;
 
         if (!this.initialized) {
             throw new Error('StorageManager: Database not initialized');
@@ -263,11 +286,17 @@ class StorageManager {
         }
 
         try {
+            // Check storage quota before saving
+            await this.checkStorageQuota();
+
+            // Prepare data for storage
+            const dataToStore = await this.prepareDataForStorage(data, compress);
+
             const key = await this.performTransaction(storeName, 'readwrite', (store) => {
                 return new Promise((resolve, reject) => {
                     const request = overwrite ? 
-                        store.put(data) : 
-                        store.add(data);
+                        store.put(dataToStore) : 
+                        store.add(dataToStore);
 
                     request.onsuccess = () => {
                         resolve(request.result);
@@ -282,7 +311,10 @@ class StorageManager {
             this.emitStorageEvent('storage:saved', { 
                 storeName, 
                 key, 
-                data 
+                data: dataToStore,
+                compressed: dataToStore.compressed || false,
+                originalSize: dataToStore.originalSize,
+                compressedSize: dataToStore.compressedSize
             });
 
             if (this.debugMode) {
@@ -301,7 +333,7 @@ class StorageManager {
     }
 
     /**
-     * Load data from an object store
+     * Load data from an object store with decompression support
      * @param {string} storeName - Object store name
      * @param {string} key - Data key
      * @returns {Promise<Object|null>} Loaded data or null if not found
@@ -316,7 +348,7 @@ class StorageManager {
         }
 
         try {
-            const data = await this.performTransaction(storeName, 'readonly', (store) => {
+            const storedData = await this.performTransaction(storeName, 'readonly', (store) => {
                 return new Promise((resolve, reject) => {
                     const request = store.get(key);
 
@@ -330,10 +362,18 @@ class StorageManager {
                 });
             });
 
+            if (!storedData) {
+                return null;
+            }
+
+            // Decompress data if needed
+            const data = await this.prepareDataForUse(storedData);
+
             this.emitStorageEvent('storage:loaded', { 
                 storeName, 
                 key, 
-                data 
+                data,
+                compressed: storedData.compressed || false
             });
 
             if (this.debugMode) {
@@ -687,10 +727,518 @@ class StorageManager {
     }
 
     /**
+     * Prepare data for storage (compression)
+     * @param {Object} data - Data to prepare
+     * @param {boolean} forceCompress - Force compression
+     * @returns {Promise<Object>} Prepared data
+     */
+    async prepareDataForStorage(data, forceCompress = null) {
+        const dataString = JSON.stringify(data);
+        const dataSize = new Blob([dataString]).size;
+        
+        let shouldCompress = forceCompress !== null ? forceCompress : 
+            (this.compressionEnabled && dataSize > this.compressionThreshold);
+
+        if (shouldCompress) {
+            try {
+                const compressed = await this.compressData(dataString);
+                return {
+                    compressed: true,
+                    originalSize: dataSize,
+                    compressedSize: compressed.length,
+                    data: compressed,
+                    timestamp: Date.now()
+                };
+            } catch (error) {
+                if (this.debugMode) {
+                    console.warn('StorageManager: Compression failed, storing uncompressed:', error.message);
+                }
+                // Fall back to uncompressed storage
+                shouldCompress = false;
+            }
+        }
+
+        return {
+            compressed: false,
+            originalSize: dataSize,
+            compressedSize: dataSize,
+            data: dataString,
+            timestamp: Date.now()
+        };
+    }
+
+    /**
+     * Prepare data for use (decompression)
+     * @param {Object} storedData - Stored data object
+     * @returns {Promise<Object>} Decompressed data
+     */
+    async prepareDataForUse(storedData) {
+        if (storedData.compressed) {
+            try {
+                const decompressed = await this.decompressData(storedData.data);
+                return JSON.parse(decompressed);
+            } catch (error) {
+                console.error('StorageManager: Decompression failed:', error);
+                throw new Error('Failed to decompress stored data');
+            }
+        } else {
+            return JSON.parse(storedData.data);
+        }
+    }
+
+    /**
+     * Compress data using browser's built-in compression
+     * @param {string} data - Data to compress
+     * @returns {Promise<string>} Compressed data as base64
+     */
+    async compressData(data) {
+        if (typeof CompressionStream !== 'undefined') {
+            // Use modern CompressionStream API
+            const stream = new CompressionStream('gzip');
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+            
+            const encoder = new TextEncoder();
+            const dataBuffer = encoder.encode(data);
+            
+            await writer.write(dataBuffer);
+            await writer.close();
+            
+            const chunks = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+            }
+            
+            const compressedBuffer = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+            let offset = 0;
+            for (const chunk of chunks) {
+                compressedBuffer.set(chunk, offset);
+                offset += chunk.length;
+            }
+            
+            return btoa(String.fromCharCode(...compressedBuffer));
+        } else {
+            // Fallback: simple compression for older browsers
+            return btoa(unescape(encodeURIComponent(data)));
+        }
+    }
+
+    /**
+     * Decompress data using browser's built-in decompression
+     * @param {string} compressedData - Compressed data as base64
+     * @returns {Promise<string>} Decompressed data
+     */
+    async decompressData(compressedData) {
+        if (typeof DecompressionStream !== 'undefined') {
+            // Use modern DecompressionStream API
+            const stream = new DecompressionStream('gzip');
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+            
+            const compressedBuffer = new Uint8Array(atob(compressedData).split('').map(c => c.charCodeAt(0)));
+            
+            await writer.write(compressedBuffer);
+            await writer.close();
+            
+            const chunks = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+            }
+            
+            const decompressedBuffer = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+            let offset = 0;
+            for (const chunk of chunks) {
+                decompressedBuffer.set(chunk, offset);
+                offset += chunk.length;
+            }
+            
+            return new TextDecoder().decode(decompressedBuffer);
+        } else {
+            // Fallback: simple decompression for older browsers
+            return decodeURIComponent(escape(atob(compressedData)));
+        }
+    }
+
+    /**
+     * Check storage quota and cleanup if necessary
+     * @returns {Promise<void>}
+     */
+    async checkStorageQuota() {
+        if ('storage' in navigator && 'estimate' in navigator.storage) {
+            try {
+                const estimate = await navigator.storage.estimate();
+                const usage = estimate.usage || 0;
+                const quota = estimate.quota || this.maxStorageQuota;
+                
+                if (usage > quota * 0.9) { // 90% of quota
+                    if (this.debugMode) {
+                        console.warn('StorageManager: Storage quota nearly exceeded, running cleanup');
+                    }
+                    await this.runCleanup();
+                }
+            } catch (error) {
+                if (this.debugMode) {
+                    console.warn('StorageManager: Could not check storage quota:', error.message);
+                }
+            }
+        }
+    }
+
+    /**
+     * Start automatic cleanup routine
+     */
+    startCleanupRoutine() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+        }
+        
+        this.cleanupTimer = setInterval(() => {
+            this.runCleanup().catch(error => {
+                console.error('StorageManager: Automatic cleanup failed:', error);
+            });
+        }, this.cleanupInterval);
+    }
+
+    /**
+     * Stop automatic cleanup routine
+     */
+    stopCleanupRoutine() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+    }
+
+    /**
+     * Run cleanup routine
+     * @param {Object} options - Cleanup options
+     * @param {number} options.maxAge - Maximum age of data in milliseconds
+     * @param {boolean} options.cleanupExpired - Clean up expired cache entries
+     * @returns {Promise<Object>} Cleanup results
+     */
+    async runCleanup(options = {}) {
+        const { maxAge = 30 * 24 * 60 * 60 * 1000, cleanupExpired = true } = options; // 30 days default
+        
+        if (!this.initialized) {
+            return { cleaned: 0, errors: 0 };
+        }
+
+        const results = { cleaned: 0, errors: 0 };
+        const cutoffTime = Date.now() - maxAge;
+
+        try {
+            // Clean up expired cache entries
+            if (cleanupExpired && this.objectStores.has('cache')) {
+                const expiredCache = await this.query('cache', {
+                    index: 'expiresAt',
+                    range: 'bound',
+                    lowerBound: 0,
+                    upperBound: cutoffTime
+                });
+
+                for (const item of expiredCache) {
+                    try {
+                        await this.delete('cache', item.key);
+                        results.cleaned++;
+                    } catch (error) {
+                        results.errors++;
+                        if (this.debugMode) {
+                            console.warn('StorageManager: Failed to delete expired cache item:', error.message);
+                        }
+                    }
+                }
+            }
+
+            // Clean up old data based on timestamp
+            for (const storeName of this.objectStores.keys()) {
+                if (storeName === 'cache') continue; // Already handled above
+                
+                try {
+                    const oldData = await this.query(storeName, {
+                        range: 'bound',
+                        lowerBound: 0,
+                        upperBound: cutoffTime
+                    });
+
+                    for (const item of oldData) {
+                        if (item.timestamp && item.timestamp < cutoffTime) {
+                            try {
+                                await this.delete(storeName, item.id || item.key);
+                                results.cleaned++;
+                            } catch (error) {
+                                results.errors++;
+                                if (this.debugMode) {
+                                    console.warn(`StorageManager: Failed to delete old item from ${storeName}:`, error.message);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    results.errors++;
+                    if (this.debugMode) {
+                        console.warn(`StorageManager: Failed to cleanup ${storeName}:`, error.message);
+                    }
+                }
+            }
+
+            this.emitStorageEvent('storage:cleanup-completed', results);
+
+            if (this.debugMode) {
+                console.log(`StorageManager: Cleanup completed. Cleaned: ${results.cleaned}, Errors: ${results.errors}`);
+            }
+
+            return results;
+        } catch (error) {
+            console.error('StorageManager: Cleanup failed:', error);
+            this.emitStorageEvent('storage:cleanup-error', { error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Create backup of all data
+     * @param {Object} options - Backup options
+     * @param {boolean} options.includeMetadata - Include metadata in backup
+     * @returns {Promise<Object>} Backup data
+     */
+    async createBackup(options = {}) {
+        const { includeMetadata = true } = options;
+
+        if (!this.initialized) {
+            throw new Error('StorageManager: Database not initialized');
+        }
+
+        try {
+            const backup = {
+                version: this.migrationVersion,
+                timestamp: Date.now(),
+                dbName: this.dbName,
+                dbVersion: this.version,
+                data: {}
+            };
+
+            if (includeMetadata) {
+                backup.metadata = {
+                    compressionEnabled: this.compressionEnabled,
+                    compressionThreshold: this.compressionThreshold,
+                    maxStorageQuota: this.maxStorageQuota,
+                    objectStores: Array.from(this.objectStores.keys())
+                };
+            }
+
+            // Backup all data from all object stores
+            for (const storeName of this.objectStores.keys()) {
+                try {
+                    const allData = await this.getAll(storeName);
+                    backup.data[storeName] = allData;
+                } catch (error) {
+                    if (this.debugMode) {
+                        console.warn(`StorageManager: Failed to backup ${storeName}:`, error.message);
+                    }
+                    backup.data[storeName] = { error: error.message };
+                }
+            }
+
+            this.emitStorageEvent('storage:backup-created', {
+                timestamp: backup.timestamp,
+                size: JSON.stringify(backup).length
+            });
+
+            if (this.debugMode) {
+                console.log('StorageManager: Backup created successfully');
+            }
+
+            return backup;
+        } catch (error) {
+            console.error('StorageManager: Backup creation failed:', error);
+            this.emitStorageEvent('storage:backup-error', { error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Restore data from backup
+     * @param {Object} backup - Backup data
+     * @param {Object} options - Restore options
+     * @param {boolean} options.clearExisting - Clear existing data before restore
+     * @param {Array} options.stores - Specific stores to restore
+     * @returns {Promise<Object>} Restore results
+     */
+    async restoreBackup(backup, options = {}) {
+        const { clearExisting = false, stores = null } = options;
+
+        if (!this.initialized) {
+            throw new Error('StorageManager: Database not initialized');
+        }
+
+        if (!backup || !backup.data) {
+            throw new Error('StorageManager: Invalid backup data');
+        }
+
+        try {
+            const results = { restored: 0, errors: 0, migrated: 0 };
+
+            // Clear existing data if requested
+            if (clearExisting) {
+                for (const storeName of this.objectStores.keys()) {
+                    if (!stores || stores.includes(storeName)) {
+                        await this.clear(storeName);
+                    }
+                }
+            }
+
+            // Restore data
+            const storesToRestore = stores || Object.keys(backup.data);
+            
+            for (const storeName of storesToRestore) {
+                if (!this.objectStores.has(storeName)) {
+                    if (this.debugMode) {
+                        console.warn(`StorageManager: Store ${storeName} not found, skipping`);
+                    }
+                    continue;
+                }
+
+                const storeData = backup.data[storeName];
+                if (storeData.error) {
+                    results.errors++;
+                    continue;
+                }
+
+                // Handle migration if needed
+                if (backup.version < this.migrationVersion) {
+                    storeData = await this.migrateData(storeData, backup.version, this.migrationVersion);
+                    results.migrated++;
+                }
+
+                for (const item of storeData) {
+                    try {
+                        await this.save(storeName, item, { overwrite: true });
+                        results.restored++;
+                    } catch (error) {
+                        results.errors++;
+                        if (this.debugMode) {
+                            console.warn(`StorageManager: Failed to restore item in ${storeName}:`, error.message);
+                        }
+                    }
+                }
+            }
+
+            this.emitStorageEvent('storage:backup-restored', results);
+
+            if (this.debugMode) {
+                console.log(`StorageManager: Backup restored. Restored: ${results.restored}, Errors: ${results.errors}, Migrated: ${results.migrated}`);
+            }
+
+            return results;
+        } catch (error) {
+            console.error('StorageManager: Backup restoration failed:', error);
+            this.emitStorageEvent('storage:restore-error', { error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Migrate data between versions
+     * @param {Array} data - Data to migrate
+     * @param {number} fromVersion - Source version
+     * @param {number} toVersion - Target version
+     * @returns {Promise<Array>} Migrated data
+     */
+    async migrateData(data, fromVersion, toVersion) {
+        if (fromVersion === toVersion) {
+            return data;
+        }
+
+        let migratedData = data;
+
+        // Apply migrations in sequence
+        for (let version = fromVersion; version < toVersion; version++) {
+            migratedData = await this.applyMigration(migratedData, version, version + 1);
+        }
+
+        return migratedData;
+    }
+
+    /**
+     * Apply specific migration
+     * @param {Array} data - Data to migrate
+     * @param {number} fromVersion - Source version
+     * @param {number} toVersion - Target version
+     * @returns {Promise<Array>} Migrated data
+     */
+    async applyMigration(data, fromVersion, toVersion) {
+        // Example migration: v1 to v2
+        if (fromVersion === 1 && toVersion === 2) {
+            return data.map(item => ({
+                ...item,
+                version: 2,
+                migratedAt: Date.now()
+            }));
+        }
+
+        // Add more migrations as needed
+        return data;
+    }
+
+    /**
+     * Export backup to file
+     * @param {Object} options - Export options
+     * @returns {Promise<Blob>} Backup file as blob
+     */
+    async exportBackup(options = {}) {
+        const backup = await this.createBackup(options);
+        const backupString = JSON.stringify(backup, null, 2);
+        return new Blob([backupString], { type: 'application/json' });
+    }
+
+    /**
+     * Import backup from file
+     * @param {Blob} file - Backup file
+     * @param {Object} options - Import options
+     * @returns {Promise<Object>} Restore results
+     */
+    async importBackup(file, options = {}) {
+        try {
+            const text = await file.text();
+            const backup = JSON.parse(text);
+            return await this.restoreBackup(backup, options);
+        } catch (error) {
+            throw new Error(`Failed to import backup: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get storage usage statistics
+     * @returns {Promise<Object>} Storage usage statistics
+     */
+    async getStorageUsage() {
+        if ('storage' in navigator && 'estimate' in navigator.storage) {
+            try {
+                const estimate = await navigator.storage.estimate();
+                return {
+                    usage: estimate.usage || 0,
+                    quota: estimate.quota || this.maxStorageQuota,
+                    usagePercent: estimate.quota ? (estimate.usage / estimate.quota) * 100 : 0
+                };
+            } catch (error) {
+                return { error: error.message };
+            }
+        }
+        return { error: 'Storage API not supported' };
+    }
+
+    /**
      * Close the database connection
      * @returns {Promise<boolean>} Success status
      */
     async close() {
+        // Stop cleanup routine
+        this.stopCleanupRoutine();
+
         if (this.db) {
             this.db.close();
             this.db = null;
