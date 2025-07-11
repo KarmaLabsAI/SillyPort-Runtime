@@ -1331,7 +1331,7 @@ class StorageManager {
 
 // Export for both CommonJS and ES modules
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { StorageManager };
+    module.exports = StorageManager;
 } else if (typeof window !== 'undefined') {
     window.StorageManager = StorageManager;
 } 

@@ -1365,7 +1365,7 @@ class ConfigManager {
 
 // Export for both CommonJS and ES modules
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ConfigManager };
+    module.exports = ConfigManager;
 } else if (typeof window !== 'undefined') {
     window.ConfigManager = ConfigManager;
 } 
