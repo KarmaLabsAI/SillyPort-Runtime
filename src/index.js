@@ -14,6 +14,9 @@ const SillyTavernRuntime = require('./core/SillyTavernRuntime');
 // Character components
 const { CharacterCard, PNGMetadataExtractor } = require('./character');
 
+// Chat components
+const { FormatImporter } = require('./chat/FormatImporter');
+
 // Export main runtime class
 module.exports = {
     SillyTavernRuntime,
@@ -22,7 +25,8 @@ module.exports = {
     ConfigManager,
     StorageManager,
     CharacterCard,
-    PNGMetadataExtractor
+    PNGMetadataExtractor,
+    FormatImporter
 };
 
 // For browser environments, also attach to window
@@ -35,6 +39,7 @@ if (typeof window !== 'undefined') {
         ConfigManager,
         StorageManager,
         CharacterCard,
-        PNGMetadataExtractor
+        PNGMetadataExtractor,
+        FormatImporter
     };
 } 
