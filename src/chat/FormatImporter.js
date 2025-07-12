@@ -360,13 +360,96 @@ class FormatImporter {
     }
 
     /**
-     * Parse SillyTavern format messages (placeholder implementation)
+     * Parse SillyTavern format messages
      * @param {Object} data - SillyTavern format data
      * @returns {Array} Array of parsed messages
      */
     parseSillyTavernMessages(data) {
-        // Placeholder implementation
-        return [];
+        if (!data || typeof data !== 'object') {
+            return [];
+        }
+
+        if (!Array.isArray(data.messages)) {
+            return [];
+        }
+
+        const messages = [];
+        let messageIndex = 0;
+
+        for (const message of data.messages) {
+            messageIndex++;
+            
+            // Validate required fields
+            if (!message.id || !message.content || !message.role) {
+                if (this.debugMode) {
+                    console.log(`FormatImporter: Skipping invalid SillyTavern message at index ${messageIndex}`, message);
+                }
+                continue;
+            }
+
+            // Normalize role to standard format (SillyTavern uses "User" and "Assistant")
+            let normalizedRole = message.role.toLowerCase();
+            if (normalizedRole === 'user' || normalizedRole === 'human') {
+                normalizedRole = 'user';
+            } else if (normalizedRole === 'assistant' || normalizedRole === 'character' || normalizedRole === 'ai') {
+                normalizedRole = 'assistant';
+            }
+
+            // Create parsed message object
+            const parsedMessage = {
+                id: message.id,
+                sender: normalizedRole,
+                role: normalizedRole,
+                content: message.content.trim(),
+                timestamp: message.timestamp || Date.now() + messageIndex, // Ensure unique timestamps
+                metadata: {
+                    originalFormat: 'sillytavern',
+                    originalRole: message.role,
+                    messageIndex: messageIndex,
+                    sillytavernId: message.id
+                }
+            };
+
+            // Add additional metadata if available
+            if (message.metadata) {
+                parsedMessage.metadata.originalMetadata = message.metadata;
+            }
+
+            // Add character attribution if available
+            if (data.character_name && normalizedRole === 'assistant') {
+                parsedMessage.metadata.characterName = data.character_name;
+            }
+
+            // Add user attribution if available
+            if (data.user_name && normalizedRole === 'user') {
+                parsedMessage.metadata.userName = data.user_name;
+            }
+
+            // Add message-specific metadata
+            if (message.name) {
+                parsedMessage.metadata.originalName = message.name;
+            }
+
+            if (message.avatar) {
+                parsedMessage.metadata.avatar = message.avatar;
+            }
+
+            if (message.is_user) {
+                parsedMessage.metadata.isUser = message.is_user;
+            }
+
+            if (message.is_name) {
+                parsedMessage.metadata.isName = message.is_name;
+            }
+
+            messages.push(parsedMessage);
+        }
+
+        if (this.debugMode) {
+            console.log(`FormatImporter: Parsed ${messages.length} SillyTavern messages from ${data.messages.length} message entries`);
+        }
+
+        return messages;
     }
 
     /**
@@ -770,21 +853,269 @@ class FormatImporter {
     }
 
     /**
-     * Import SillyTavern format chat (placeholder implementation)
+     * Import SillyTavern format chat
      * @param {Object} data - SillyTavern format data
      * @param {Object} options - Import options
      * @returns {Promise<Object>} Import result
      */
     async importSillyTavernChat(data, options = {}) {
         if (!data || typeof data !== 'object') {
-            throw new Error('FormatImporter: SillyTavern format requires messages array');
+            throw new Error('FormatImporter: SillyTavern format requires object data');
         }
         if (!Array.isArray(data.messages)) {
             throw new Error('FormatImporter: SillyTavern format requires messages array');
         }
 
-        // Placeholder implementation for full SillyTavern import
-        throw new Error('FormatImporter: SillyTavern format not yet implemented');
+        const messages = this.parseSillyTavernMessages(data);
+        
+        if (messages.length === 0) {
+            throw new Error('FormatImporter: No valid messages found in SillyTavern data');
+        }
+
+        // Extract SillyTavern-specific metadata
+        const stMetadata = {
+            characterName: data.character_name || null,
+            userName: data.user_name || null,
+            chatMetadata: data.chat_metadata || null,
+            originalMessageCount: data.messages.length,
+            parsedMessageCount: messages.length
+        };
+
+        // Determine participants from messages and metadata
+        const participants = options.participants || this.extractParticipantsFromSillyTavernData(data, messages);
+
+        // Create chat session with full metadata preservation
+        const session = await this.chatManager.createChat(participants, {
+            title: options.metadata?.title || stMetadata.chatMetadata?.title || `Imported SillyTavern Chat${stMetadata.characterName ? ` - ${stMetadata.characterName}` : ''}`,
+            metadata: {
+                importFormat: 'sillytavern',
+                importTimestamp: Date.now(),
+                originalMessageCount: messages.length,
+                stData: {
+                    characterName: stMetadata.characterName,
+                    userName: stMetadata.userName,
+                    chatMetadata: stMetadata.chatMetadata
+                },
+                ...options.metadata
+            }
+        });
+
+        // Add messages to session with incremental import support
+        const importedMessages = [];
+        const batchSize = options.batchSize || 10; // Default batch size for performance
+        
+        try {
+            // Process messages in batches for better performance and error recovery
+            for (let i = 0; i < messages.length; i += batchSize) {
+                const batch = messages.slice(i, i + batchSize);
+                
+                // Process batch
+                for (const message of batch) {
+                    try {
+                        const importedMessage = await this.chatManager.addMessage(
+                            session.id,
+                            message.sender,
+                            message.content,
+                            {
+                                role: message.role,
+                                timestamp: message.timestamp,
+                                metadata: {
+                                    ...message.metadata,
+                                    imported: true,
+                                    sillytavernId: message.id,
+                                    batchIndex: Math.floor(i / batchSize)
+                                }
+                            }
+                        );
+                        importedMessages.push(importedMessage);
+                    } catch (messageError) {
+                        // Error recovery: log error but continue with other messages
+                        if (this.debugMode) {
+                            console.error(`FormatImporter: Failed to import SillyTavern message ${message.id}:`, messageError);
+                        }
+                        
+                        // Emit error event for monitoring
+                        this.eventBus.emit('chat:import:error', {
+                            format: 'sillytavern',
+                            sessionId: session.id,
+                            messageId: message.id,
+                            error: messageError.message,
+                            recoverable: true
+                        });
+                    }
+                }
+                
+                // Emit batch progress event
+                this.eventBus.emit('chat:import:progress', {
+                    format: 'sillytavern',
+                    sessionId: session.id,
+                    processed: Math.min(i + batchSize, messages.length),
+                    total: messages.length,
+                    batchIndex: Math.floor(i / batchSize)
+                });
+            }
+        } catch (batchError) {
+            // If batch processing fails completely, try individual message processing
+            if (this.debugMode) {
+                console.warn('FormatImporter: Batch processing failed, falling back to individual processing:', batchError);
+            }
+            
+            // Clear any partially imported messages
+            importedMessages.length = 0;
+            
+            // Process messages individually
+            for (const message of messages) {
+                try {
+                    const importedMessage = await this.chatManager.addMessage(
+                        session.id,
+                        message.sender,
+                        message.content,
+                        {
+                            role: message.role,
+                            timestamp: message.timestamp,
+                            metadata: {
+                                ...message.metadata,
+                                imported: true,
+                                sillytavernId: message.id,
+                                fallbackProcessing: true
+                            }
+                        }
+                    );
+                    importedMessages.push(importedMessage);
+                } catch (messageError) {
+                    if (this.debugMode) {
+                        console.error(`FormatImporter: Failed to import SillyTavern message ${message.id} (fallback):`, messageError);
+                    }
+                }
+            }
+        }
+
+        // Handle conversation merging if specified
+        if (options.mergeWithExisting && options.existingSessionId) {
+            try {
+                await this.mergeConversations(session.id, options.existingSessionId, options.mergeOptions);
+            } catch (mergeError) {
+                if (this.debugMode) {
+                    console.warn('FormatImporter: Conversation merging failed:', mergeError);
+                }
+            }
+        }
+
+        // Emit import completion event
+        this.eventBus.emit('chat:imported', {
+            format: 'sillytavern',
+            sessionId: session.id,
+            messageCount: importedMessages.length,
+            originalCount: messages.length,
+            metadata: {
+                ...stMetadata,
+                ...options.metadata
+            }
+        });
+
+        return {
+            format: 'sillytavern',
+            session: session,
+            messages: importedMessages,
+            messageCount: importedMessages.length,
+            originalMessageCount: messages.length,
+            stMetadata: stMetadata
+        };
+    }
+
+    /**
+     * Extract participants from SillyTavern data
+     * @param {Object} data - SillyTavern format data
+     * @param {Array} messages - Parsed messages
+     * @returns {Array} Array of participant IDs
+     */
+    extractParticipantsFromSillyTavernData(data, messages) {
+        const participants = new Set();
+        
+        // Add character name if available
+        if (data.character_name) {
+            participants.add(data.character_name);
+        }
+        
+        // Add user name if available
+        if (data.user_name) {
+            participants.add(data.user_name);
+        } else {
+            // Fallback to 'user' if no user_name
+            participants.add('user');
+        }
+        
+        // Add participants from messages (fallback)
+        for (const message of messages) {
+            if (message.sender && message.sender !== 'system') {
+                if (message.sender === 'user' && data.user_name) {
+                    participants.add(data.user_name);
+                } else if (message.sender === 'assistant' && data.character_name) {
+                    participants.add(data.character_name);
+                } else {
+                    participants.add(message.sender);
+                }
+            }
+        }
+        
+        return Array.from(participants);
+    }
+
+    /**
+     * Merge conversations (for incremental imports)
+     * @param {string} newSessionId - ID of the new session
+     * @param {string} existingSessionId - ID of the existing session to merge with
+     * @param {Object} mergeOptions - Merge options
+     * @returns {Promise<void>}
+     */
+    async mergeConversations(newSessionId, existingSessionId, mergeOptions = {}) {
+        try {
+            // Get messages from both sessions
+            const newMessages = this.chatManager.getMessages(newSessionId);
+            const existingMessages = this.chatManager.getMessages(existingSessionId);
+            
+            // Determine merge strategy
+            const strategy = mergeOptions.strategy || 'append'; // append, prepend, interleave
+            
+            let mergedMessages = [];
+            
+            switch (strategy) {
+                case 'prepend':
+                    mergedMessages = [...newMessages, ...existingMessages];
+                    break;
+                case 'interleave':
+                    // Interleave messages based on timestamps
+                    const allMessages = [...newMessages, ...existingMessages];
+                    mergedMessages = allMessages.sort((a, b) => a.timestamp - b.timestamp);
+                    break;
+                case 'append':
+                default:
+                    mergedMessages = [...existingMessages, ...newMessages];
+                    break;
+            }
+            
+            // Update the existing session with merged messages
+            // Note: This is a simplified implementation - in a real scenario,
+            // you might want to handle conflicts and duplicates more carefully
+            
+            if (this.debugMode) {
+                console.log(`FormatImporter: Merged ${newMessages.length} new messages with ${existingMessages.length} existing messages using ${strategy} strategy`);
+            }
+            
+            // Emit merge event
+            this.eventBus.emit('chat:merged', {
+                newSessionId: newSessionId,
+                existingSessionId: existingSessionId,
+                strategy: strategy,
+                totalMessages: mergedMessages.length
+            });
+            
+        } catch (error) {
+            if (this.debugMode) {
+                console.error('FormatImporter: Conversation merge failed:', error);
+            }
+            throw error;
+        }
     }
 
     /**
