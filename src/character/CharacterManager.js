@@ -31,7 +31,9 @@ class CharacterManager {
             byName: new Map(),
             byTag: new Map(),
             byCreator: new Map(),
-            byVersion: new Map()
+            byVersion: new Map(),
+            byRating: new Map(),
+            byCategory: new Map()
         };
         
         // Statistics
@@ -381,6 +383,183 @@ class CharacterManager {
     }
 
     /**
+     * Search by rating
+     * @param {number} rating - Rating to search for
+     * @returns {Array} Matching characters
+     */
+    searchByRating(rating) {
+        if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+            return [];
+        }
+
+        const ratingStr = rating.toString();
+        const matchingIds = this.searchIndex.byRating.get(ratingStr) || new Set();
+        
+        return Array.from(matchingIds).map(id => this.characters.get(id)).filter(Boolean);
+    }
+
+    /**
+     * Search by tag category
+     * @param {string} category - Tag category
+     * @param {string} tag - Tag value (optional)
+     * @returns {Array} Matching characters
+     */
+    searchByTagCategory(category, tag = null) {
+        if (!category || typeof category !== 'string') {
+            return [];
+        }
+
+        let matchingIds = new Set();
+
+        if (tag) {
+            const categoryKey = `${category}:${tag.toLowerCase()}`;
+            matchingIds = this.searchIndex.byCategory.get(categoryKey) || new Set();
+        } else {
+            // Search all tags in category
+            for (const [key, ids] of this.searchIndex.byCategory.entries()) {
+                if (key.startsWith(`${category}:`)) {
+                    for (const id of ids) {
+                        matchingIds.add(id);
+                    }
+                }
+            }
+        }
+        
+        return Array.from(matchingIds).map(id => this.characters.get(id)).filter(Boolean);
+    }
+
+    /**
+     * Search by creator information
+     * @param {Object} creatorInfo - Creator information to search for
+     * @returns {Array} Matching characters
+     */
+    searchByCreatorInfo(creatorInfo) {
+        if (!creatorInfo || typeof creatorInfo !== 'object') {
+            return [];
+        }
+
+        const matchingIds = new Set();
+        let hasMatches = false;
+
+        // Search by creator name
+        if (creatorInfo.name) {
+            const creatorName = creatorInfo.name.toLowerCase();
+            const nameMatches = this.searchIndex.byCreator.get(creatorName) || new Set();
+            for (const id of nameMatches) {
+                matchingIds.add(id);
+                hasMatches = true;
+            }
+        }
+
+        // If no name matches, return empty array
+        if (!hasMatches) {
+            return [];
+        }
+
+        // Filter by additional creator criteria
+        const results = Array.from(matchingIds).map(id => this.characters.get(id)).filter(Boolean);
+        
+        if (creatorInfo.contact || creatorInfo.website) {
+            return results.filter(character => {
+                const metadata = character.getCharacterMetadata();
+                if (!metadata) return false;
+                
+                const creatorData = metadata.getCreatorInfo();
+                
+                if (creatorInfo.contact && creatorData.contact !== creatorInfo.contact) {
+                    return false;
+                }
+                
+                if (creatorInfo.website && creatorData.website !== creatorInfo.website) {
+                    return false;
+                }
+                
+                return true;
+            });
+        }
+
+        return results;
+    }
+
+    /**
+     * Get characters with highest ratings
+     * @param {number} limit - Maximum number of characters to return
+     * @returns {Array} Top-rated characters
+     */
+    getTopRatedCharacters(limit = 10) {
+        const ratedCharacters = [];
+        
+        for (const character of this.characters.values()) {
+            const rating = character.getRating();
+            if (rating) {
+                ratedCharacters.push({ character, rating });
+            }
+        }
+
+        return ratedCharacters
+            .sort((a, b) => b.rating - a.rating)
+            .slice(0, limit)
+            .map(item => item.character);
+    }
+
+    /**
+     * Get most favorited characters
+     * @param {number} limit - Maximum number of characters to return
+     * @returns {Array} Most favorited characters
+     */
+    getMostFavoritedCharacters(limit = 10) {
+        const favoritedCharacters = [];
+        
+        for (const character of this.characters.values()) {
+            const metadata = character.getCharacterMetadata();
+            if (metadata) {
+                const stats = metadata.getStats();
+                if (stats.favoriteCount > 0) {
+                    favoritedCharacters.push({ character, favoriteCount: stats.favoriteCount });
+                }
+            }
+        }
+
+        return favoritedCharacters
+            .sort((a, b) => b.favoriteCount - a.favoriteCount)
+            .slice(0, limit)
+            .map(item => item.character);
+    }
+
+    /**
+     * Get characters by tag category statistics
+     * @returns {Object} Tag category statistics
+     */
+    getTagCategoryStats() {
+        const stats = {
+            categories: {},
+            totalCharacters: this.characters.size
+        };
+
+        for (const character of this.characters.values()) {
+            const metadata = character.getCharacterMetadata();
+            if (metadata) {
+                const tags = metadata.getAllTags();
+                
+                for (const [category, tagList] of Object.entries(tags)) {
+                    if (!stats.categories[category]) {
+                        stats.categories[category] = {};
+                    }
+                    
+                    for (const tag of tagList) {
+                        if (!stats.categories[category][tag]) {
+                            stats.categories[category][tag] = 0;
+                        }
+                        stats.categories[category][tag]++;
+                    }
+                }
+            }
+        }
+
+        return stats;
+    }
+
+    /**
      * Remove character from collection
      * @param {string} characterId - Character ID to remove
      * @returns {boolean} True if removed, false if not found
@@ -579,6 +758,53 @@ class CharacterManager {
                 this.searchIndex.byTag.set(tagLower, new Set());
             }
             this.searchIndex.byTag.get(tagLower).add(characterId);
+        }
+
+        // Enhanced metadata indexing
+        this.updateEnhancedMetadataIndex(characterCard);
+    }
+
+    /**
+     * Update enhanced metadata search index
+     * @param {CharacterCard} characterCard - Character card
+     */
+    updateEnhancedMetadataIndex(characterCard) {
+        const characterId = characterCard.data.id;
+        const metadata = characterCard.getCharacterMetadata();
+
+        if (!metadata) {
+            return;
+        }
+
+        const metadataData = metadata.getMetadata();
+
+        // Index by rating
+        if (metadataData.stats.rating) {
+            const rating = metadataData.stats.rating.toString();
+            if (!this.searchIndex.byRating.has(rating)) {
+                this.searchIndex.byRating.set(rating, new Set());
+            }
+            this.searchIndex.byRating.get(rating).add(characterId);
+        }
+
+        // Index by tag categories
+        for (const [category, tags] of Object.entries(metadataData.tags)) {
+            for (const tag of tags) {
+                const categoryKey = `${category}:${tag.toLowerCase()}`;
+                if (!this.searchIndex.byCategory.has(categoryKey)) {
+                    this.searchIndex.byCategory.set(categoryKey, new Set());
+                }
+                this.searchIndex.byCategory.get(categoryKey).add(characterId);
+            }
+        }
+
+        // Index by creator info
+        if (metadataData.creator.name) {
+            const creatorName = metadataData.creator.name.toLowerCase();
+            if (!this.searchIndex.byCreator.has(creatorName)) {
+                this.searchIndex.byCreator.set(creatorName, new Set());
+            }
+            this.searchIndex.byCreator.get(creatorName).add(characterId);
         }
     }
 

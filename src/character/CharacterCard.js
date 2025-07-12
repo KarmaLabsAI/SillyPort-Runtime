@@ -6,9 +6,11 @@
  * 
  * Task 2.2.2: Character Card Validation
  * Task 2.2.3: Format Conversion
+ * Task 2.3.2: Character Metadata
  */
 
 const PNGMetadataExtractor = require('./PNGMetadataExtractor.js');
+const { CharacterMetadata } = require('./CharacterMetadata.js');
 const yaml = require('js-yaml');
 
 class CharacterCard {
@@ -17,6 +19,7 @@ class CharacterCard {
         this.metadata = {};
         this.validationErrors = [];
         this.isValidated = false;
+        this.characterMetadata = null; // Enhanced metadata management
         
         // Character Card V2 Schema
         this.V2_SCHEMA = {
@@ -383,6 +386,180 @@ class CharacterCard {
      */
     getMetadata() {
         return { ...this.metadata };
+    }
+
+    /**
+     * Initialize enhanced metadata management
+     * @returns {CharacterMetadata} CharacterMetadata instance
+     */
+    initializeMetadata() {
+        if (!this.characterMetadata) {
+            this.characterMetadata = new CharacterMetadata(this);
+        }
+        return this.characterMetadata;
+    }
+
+    /**
+     * Get enhanced metadata management
+     * @returns {CharacterMetadata|null} CharacterMetadata instance
+     */
+    getCharacterMetadata() {
+        return this.characterMetadata;
+    }
+
+    /**
+     * Extract and process metadata
+     * @returns {Object} Processed metadata
+     */
+    extractMetadata() {
+        this.initializeMetadata();
+        return this.characterMetadata.getMetadata();
+    }
+
+    /**
+     * Add tag to character
+     * @param {string} tag - Tag to add
+     * @param {string} category - Tag category (optional)
+     * @returns {boolean} Success status
+     */
+    addTag(tag, category = null) {
+        this.initializeMetadata();
+        return this.characterMetadata.addTag(tag, category);
+    }
+
+    /**
+     * Remove tag from character
+     * @param {string} tag - Tag to remove
+     * @param {string} category - Tag category (optional)
+     * @returns {boolean} Success status
+     */
+    removeTag(tag, category = null) {
+        this.initializeMetadata();
+        return this.characterMetadata.removeTag(tag, category);
+    }
+
+    /**
+     * Get tags by category
+     * @param {string} category - Tag category
+     * @returns {Array} Array of tags
+     */
+    getTagsByCategory(category) {
+        this.initializeMetadata();
+        return this.characterMetadata.getTagsByCategory(category);
+    }
+
+    /**
+     * Get all tags
+     * @returns {Object} All tags organized by category
+     */
+    getAllTags() {
+        this.initializeMetadata();
+        return this.characterMetadata.getAllTags();
+    }
+
+    /**
+     * Search tags
+     * @param {string} query - Search query
+     * @returns {Array} Matching tags with category information
+     */
+    searchTags(query) {
+        this.initializeMetadata();
+        return this.characterMetadata.searchTags(query);
+    }
+
+    /**
+     * Set creator information
+     * @param {Object} creatorInfo - Creator information
+     * @returns {boolean} Success status
+     */
+    setCreatorInfo(creatorInfo) {
+        this.initializeMetadata();
+        return this.characterMetadata.setCreatorInfo(creatorInfo);
+    }
+
+    /**
+     * Get creator information
+     * @returns {Object} Creator information
+     */
+    getCreatorInfo() {
+        this.initializeMetadata();
+        return this.characterMetadata.getCreatorInfo();
+    }
+
+    /**
+     * Add extension data
+     * @param {string} extensionName - Extension name
+     * @param {Object} data - Extension data
+     * @returns {boolean} Success status
+     */
+    addExtensionData(extensionName, data) {
+        this.initializeMetadata();
+        return this.characterMetadata.addExtensionData(extensionName, data);
+    }
+
+    /**
+     * Get extension data
+     * @param {string} extensionName - Extension name
+     * @returns {Object|null} Extension data
+     */
+    getExtensionData(extensionName) {
+        this.initializeMetadata();
+        return this.characterMetadata.getExtensionData(extensionName);
+    }
+
+    /**
+     * Get all extension data
+     * @returns {Object} All extension data
+     */
+    getAllExtensionData() {
+        this.initializeMetadata();
+        return this.characterMetadata.getAllExtensionData();
+    }
+
+    /**
+     * Set character rating
+     * @param {number} rating - Rating (1-5)
+     * @returns {boolean} Success status
+     */
+    setRating(rating) {
+        this.initializeMetadata();
+        return this.characterMetadata.setRating(rating);
+    }
+
+    /**
+     * Get character rating
+     * @returns {number|null} Character rating
+     */
+    getRating() {
+        this.initializeMetadata();
+        const stats = this.characterMetadata.getStats();
+        return stats.rating;
+    }
+
+    /**
+     * Increment favorite count
+     */
+    incrementFavoriteCount() {
+        this.initializeMetadata();
+        this.characterMetadata.incrementFavoriteCount();
+    }
+
+    /**
+     * Get metadata statistics
+     * @returns {Object} Metadata statistics
+     */
+    getMetadataStats() {
+        this.initializeMetadata();
+        return this.characterMetadata.getStats();
+    }
+
+    /**
+     * Get version history
+     * @returns {Array} Version history
+     */
+    getVersionHistory() {
+        this.initializeMetadata();
+        return this.characterMetadata.getVersionHistory();
     }
 
     /**
