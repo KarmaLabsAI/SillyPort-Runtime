@@ -8,7 +8,7 @@
  * Task 2.2.3: Format Conversion
  */
 
-const { PNGMetadataExtractor } = require('./PNGMetadataExtractor.js');
+const PNGMetadataExtractor = require('./PNGMetadataExtractor.js');
 const yaml = require('js-yaml');
 
 class CharacterCard {
@@ -410,15 +410,16 @@ class CharacterCard {
     }
 
     /**
-     * Load emotion sprite (placeholder for future implementation)
+     * Load emotion sprite from file
      * @param {File|Blob} file - Emotion sprite file
      * @returns {Promise<Object>} Emotion sprite data
      */
     static async loadEmotionSprite(file) {
-        // This is a placeholder for future emotion sprite loading
-        // Will be implemented in Task 2.3.1: Character Collection
+        // Extract emotion name from filename (remove extension)
+        const emotionName = file.name ? file.name.replace(/\.[^/.]+$/, '') : 'unknown';
+        
         return {
-            name: file.name || 'unknown',
+            name: emotionName,
             type: file.type || 'image/png',
             size: file.size || 0,
             timestamp: Date.now()
