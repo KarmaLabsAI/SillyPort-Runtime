@@ -284,13 +284,79 @@ class FormatImporter {
     }
 
     /**
-     * Parse CAI Tools format messages (placeholder implementation)
+     * Parse CAI Tools format messages
      * @param {Object} data - CAI Tools format data
      * @returns {Array} Array of parsed messages
      */
     parseCaiToolsMessages(data) {
-        // Placeholder implementation
-        return [];
+        if (!data || typeof data !== 'object') {
+            return [];
+        }
+
+        if (!Array.isArray(data.history)) {
+            return [];
+        }
+
+        const messages = [];
+        let messageIndex = 0;
+
+        for (const message of data.history) {
+            messageIndex++;
+            
+            // Validate required fields
+            if (!message.id || !message.content || !message.role) {
+                if (this.debugMode) {
+                    console.log(`FormatImporter: Skipping invalid CAI Tools message at index ${messageIndex}`, message);
+                }
+                continue;
+            }
+
+            // Normalize role to standard format
+            let normalizedRole = message.role.toLowerCase();
+            if (normalizedRole === 'human' || normalizedRole === 'user') {
+                normalizedRole = 'user';
+            } else if (normalizedRole === 'assistant' || normalizedRole === 'character' || normalizedRole === 'ai') {
+                normalizedRole = 'assistant';
+            }
+
+            // Create parsed message object
+            const parsedMessage = {
+                id: message.id,
+                sender: normalizedRole,
+                role: normalizedRole,
+                content: message.content.trim(),
+                timestamp: message.timestamp || Date.now() + messageIndex, // Ensure unique timestamps
+                metadata: {
+                    originalFormat: 'caiTools',
+                    originalRole: message.role,
+                    messageIndex: messageIndex,
+                    caiToolsId: message.id
+                }
+            };
+
+            // Add additional metadata if available
+            if (message.metadata) {
+                parsedMessage.metadata.originalMetadata = message.metadata;
+            }
+
+            // Add character attribution if available
+            if (data.character_name && normalizedRole === 'assistant') {
+                parsedMessage.metadata.characterName = data.character_name;
+            }
+
+            // Add user attribution if available
+            if (data.user_name && normalizedRole === 'user') {
+                parsedMessage.metadata.userName = data.user_name;
+            }
+
+            messages.push(parsedMessage);
+        }
+
+        if (this.debugMode) {
+            console.log(`FormatImporter: Parsed ${messages.length} CAI Tools messages from ${data.history.length} history entries`);
+        }
+
+        return messages;
     }
 
     /**
@@ -513,21 +579,194 @@ class FormatImporter {
     }
 
     /**
-     * Import CAI Tools format chat (placeholder implementation)
+     * Import CAI Tools format chat
      * @param {Object} data - CAI Tools format data
      * @param {Object} options - Import options
      * @returns {Promise<Object>} Import result
      */
     async importCaiToolsChat(data, options = {}) {
         if (!data || typeof data !== 'object') {
-            throw new Error('FormatImporter: CAI Tools format requires history array');
+            throw new Error('FormatImporter: CAI Tools format requires object data');
         }
         if (!Array.isArray(data.history)) {
             throw new Error('FormatImporter: CAI Tools format requires history array');
         }
 
-        // Placeholder implementation for full CAI Tools import
-        throw new Error('FormatImporter: CAI Tools format not yet implemented');
+        const messages = this.parseCaiToolsMessages(data);
+        
+        if (messages.length === 0) {
+            throw new Error('FormatImporter: No valid messages found in CAI Tools data');
+        }
+
+        // Extract CAI Tools-specific metadata
+        const caiMetadata = {
+            characterName: data.character_name || null,
+            userName: data.user_name || null
+        };
+
+        // Determine participants from messages and metadata
+        const participants = options.participants || this.extractParticipantsFromCaiToolsData(data, messages);
+
+        // Create chat session
+        const session = await this.chatManager.createChat(participants, {
+            title: options.metadata?.title || `Imported CAI Tools Chat${caiMetadata.characterName ? ` - ${caiMetadata.characterName}` : ''}`,
+            metadata: {
+                importFormat: 'caiTools',
+                importTimestamp: Date.now(),
+                originalMessageCount: messages.length,
+                caiData: caiMetadata,
+                ...options.metadata
+            }
+        });
+
+        // Add messages to session with batch processing support
+        const importedMessages = [];
+        const batchSize = options.batchSize || 10; // Default batch size for performance
+        
+        try {
+            // Process messages in batches for better performance and error recovery
+            for (let i = 0; i < messages.length; i += batchSize) {
+                const batch = messages.slice(i, i + batchSize);
+                
+                // Process batch
+                for (const message of batch) {
+                    try {
+                        const importedMessage = await this.chatManager.addMessage(
+                            session.id,
+                            message.sender,
+                            message.content,
+                            {
+                                role: message.role,
+                                timestamp: message.timestamp,
+                                metadata: {
+                                    ...message.metadata,
+                                    imported: true,
+                                    caiToolsId: message.id,
+                                    batchIndex: Math.floor(i / batchSize)
+                                }
+                            }
+                        );
+                        importedMessages.push(importedMessage);
+                    } catch (messageError) {
+                        // Error recovery: log error but continue with other messages
+                        if (this.debugMode) {
+                            console.error(`FormatImporter: Failed to import CAI Tools message ${message.id}:`, messageError);
+                        }
+                        
+                        // Emit error event for monitoring
+                        this.eventBus.emit('chat:import:error', {
+                            format: 'caiTools',
+                            sessionId: session.id,
+                            messageId: message.id,
+                            error: messageError.message,
+                            recoverable: true
+                        });
+                    }
+                }
+                
+                // Emit batch progress event
+                this.eventBus.emit('chat:import:progress', {
+                    format: 'caiTools',
+                    sessionId: session.id,
+                    processed: Math.min(i + batchSize, messages.length),
+                    total: messages.length,
+                    batchIndex: Math.floor(i / batchSize)
+                });
+            }
+        } catch (batchError) {
+            // If batch processing fails completely, try individual message processing
+            if (this.debugMode) {
+                console.warn('FormatImporter: Batch processing failed, falling back to individual processing:', batchError);
+            }
+            
+            // Clear any partially imported messages
+            importedMessages.length = 0;
+            
+            // Process messages individually
+            for (const message of messages) {
+                try {
+                    const importedMessage = await this.chatManager.addMessage(
+                        session.id,
+                        message.sender,
+                        message.content,
+                        {
+                            role: message.role,
+                            timestamp: message.timestamp,
+                            metadata: {
+                                ...message.metadata,
+                                imported: true,
+                                caiToolsId: message.id,
+                                fallbackProcessing: true
+                            }
+                        }
+                    );
+                    importedMessages.push(importedMessage);
+                } catch (messageError) {
+                    if (this.debugMode) {
+                        console.error(`FormatImporter: Failed to import CAI Tools message ${message.id} (fallback):`, messageError);
+                    }
+                }
+            }
+        }
+
+        // Emit import completion event
+        this.eventBus.emit('chat:imported', {
+            format: 'caiTools',
+            sessionId: session.id,
+            messageCount: importedMessages.length,
+            originalCount: messages.length,
+            metadata: {
+                ...caiMetadata,
+                ...options.metadata
+            }
+        });
+
+        return {
+            format: 'caiTools',
+            session: session,
+            messages: importedMessages,
+            messageCount: importedMessages.length,
+            originalMessageCount: messages.length,
+            caiMetadata: caiMetadata
+        };
+    }
+
+    /**
+     * Extract participants from CAI Tools data
+     * @param {Object} data - CAI Tools format data
+     * @param {Array} messages - Parsed messages
+     * @returns {Array} Array of participant IDs
+     */
+    extractParticipantsFromCaiToolsData(data, messages) {
+        const participants = new Set();
+        
+        // Add character name if available
+        if (data.character_name) {
+            participants.add(data.character_name);
+        }
+        
+        // Add user name if available
+        if (data.user_name) {
+            participants.add(data.user_name);
+        } else {
+            // Fallback to 'user' if no user_name
+            participants.add('user');
+        }
+        
+        // Add participants from messages (fallback)
+        for (const message of messages) {
+            if (message.sender && message.sender !== 'system') {
+                if (message.sender === 'user' && data.user_name) {
+                    participants.add(data.user_name);
+                } else if (message.sender === 'assistant' && data.character_name) {
+                    participants.add(data.character_name);
+                } else {
+                    participants.add(message.sender);
+                }
+            }
+        }
+        
+        return Array.from(participants);
     }
 
     /**
