@@ -35,6 +35,23 @@ class ChatManager {
         this.maxMessagesPerSession = 1000;
         this.maxMessageLength = 10000;
         
+        // Group chat support - Task 3.1.3
+        this.turnOrder = new Map(); // sessionId -> Array of participant IDs in turn order
+        this.participantStates = new Map(); // sessionId -> Map of participantId -> state
+        this.groupBehaviors = new Map(); // sessionId -> group behavior configuration
+        this.synchronizationTimers = new Map(); // sessionId -> timer for participant sync
+        
+        // Group chat configuration
+        this.groupChatConfig = {
+            enableTurnOrder: true,
+            autoAdvanceTurn: true,
+            turnTimeout: 30000, // 30 seconds
+            maxParticipants: 10,
+            enableSynchronization: true,
+            syncInterval: 5000, // 5 seconds
+            defaultBehavior: 'collaborative' // collaborative, competitive, neutral
+        };
+        
         // Initialize auto-save if enabled
         if (this.autoSaveEnabled) {
             this.startAutoSave();
@@ -1019,15 +1036,509 @@ class ChatManager {
         };
     }
 
+    // ============================================================================
+    // GROUP CHAT SUPPORT - Task 3.1.3
+    // ============================================================================
+
+    /**
+     * Set turn order for a group chat session
+     * @param {string} sessionId - The session ID
+     * @param {Array} participantIds - Array of participant IDs in turn order
+     * @returns {Promise<boolean>} Success status
+     */
+    async setTurnOrder(sessionId, participantIds) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            throw new Error('ChatManager: Session ID must be a non-empty string');
+        }
+
+        if (!Array.isArray(participantIds)) {
+            throw new Error('ChatManager: Participant IDs must be an array');
+        }
+
+        const session = this.getChat(sessionId);
+        if (!session) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        // Validate that all participants are in the session
+        const sessionParticipants = new Set(session.participantIds);
+        const invalidParticipants = participantIds.filter(id => !sessionParticipants.has(id));
+        
+        if (invalidParticipants.length > 0) {
+            throw new Error(`ChatManager: Invalid participants in turn order: ${invalidParticipants.join(', ')}`);
+        }
+
+        // Set turn order
+        this.turnOrder.set(sessionId, [...participantIds]);
+
+        // Initialize participant states if not exists
+        if (!this.participantStates.has(sessionId)) {
+            this.participantStates.set(sessionId, new Map());
+        }
+
+        // Initialize states for all participants
+        const participantStates = this.participantStates.get(sessionId);
+        participantIds.forEach(id => {
+            if (!participantStates.has(id)) {
+                participantStates.set(id, {
+                    lastTurn: null,
+                    turnCount: 0,
+                    isActive: false,
+                    status: 'waiting'
+                });
+            }
+        });
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatTurnOrder.${sessionId}`, participantIds);
+            this.stateManager.setState(`chatParticipantStates.${sessionId}`, Object.fromEntries(participantStates));
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:turnOrder:set', {
+                sessionId,
+                session,
+                turnOrder: participantIds,
+                participantStates: Object.fromEntries(participantStates)
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Set turn order for session '${sessionId}': ${participantIds.join(' -> ')}`);
+        }
+
+        return true;
+    }
+
+    /**
+     * Get current turn order for a session
+     * @param {string} sessionId - The session ID
+     * @returns {Array|null} Turn order array or null if not set
+     */
+    getTurnOrder(sessionId) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            return null;
+        }
+        return this.turnOrder.get(sessionId) || null;
+    }
+
+    /**
+     * Get current turn for a session
+     * @param {string} sessionId - The session ID
+     * @returns {string|null} Current participant ID or null if no turn order
+     */
+    getCurrentTurn(sessionId) {
+        const turnOrder = this.getTurnOrder(sessionId);
+        if (!turnOrder || turnOrder.length === 0) {
+            return null;
+        }
+
+        const participantStates = this.participantStates.get(sessionId);
+        if (!participantStates) {
+            return turnOrder[0]; // Default to first participant
+        }
+
+        // Find the first participant who hasn't had their turn recently
+        const now = Date.now();
+        for (const participantId of turnOrder) {
+            const state = participantStates.get(participantId);
+            if (!state || !state.lastTurn || (now - state.lastTurn) > this.groupChatConfig.turnTimeout) {
+                return participantId;
+            }
+        }
+
+        // If all participants have had recent turns, return to the first
+        return turnOrder[0];
+    }
+
+    /**
+     * Advance turn to next participant
+     * @param {string} sessionId - The session ID
+     * @param {string} currentParticipantId - Current participant who just finished their turn
+     * @returns {Promise<string|null>} Next participant ID or null if no turn order
+     */
+    async advanceTurn(sessionId, currentParticipantId) {
+        const turnOrder = this.getTurnOrder(sessionId);
+        if (!turnOrder || turnOrder.length === 0) {
+            return null;
+        }
+
+        const participantStates = this.participantStates.get(sessionId);
+        if (!participantStates) {
+            return null;
+        }
+
+        // Update current participant's state
+        const currentState = participantStates.get(currentParticipantId);
+        if (currentState) {
+            currentState.lastTurn = Date.now();
+            currentState.turnCount = (currentState.turnCount || 0) + 1;
+            currentState.isActive = false;
+            currentState.status = 'completed';
+        }
+
+        // Find next participant
+        const currentIndex = turnOrder.indexOf(currentParticipantId);
+        const nextIndex = (currentIndex + 1) % turnOrder.length;
+        const nextParticipantId = turnOrder[nextIndex];
+
+        // Update next participant's state
+        const nextState = participantStates.get(nextParticipantId);
+        if (nextState) {
+            nextState.isActive = true;
+            nextState.status = 'active';
+        }
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatParticipantStates.${sessionId}`, Object.fromEntries(participantStates));
+            this.stateManager.setState(`chatCurrentTurn.${sessionId}`, nextParticipantId);
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:turn:advanced', {
+                sessionId,
+                previousParticipant: currentParticipantId,
+                currentParticipant: nextParticipantId,
+                turnOrder,
+                participantStates: Object.fromEntries(participantStates)
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Advanced turn in session '${sessionId}' from '${currentParticipantId}' to '${nextParticipantId}'`);
+        }
+
+        return nextParticipantId;
+    }
+
+    /**
+     * Set group behavior for a session
+     * @param {string} sessionId - The session ID
+     * @param {string} behavior - Behavior type: 'collaborative', 'competitive', 'neutral'
+     * @param {Object} options - Behavior-specific options
+     * @returns {Promise<boolean>} Success status
+     */
+    async setGroupBehavior(sessionId, behavior, options = {}) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            throw new Error('ChatManager: Session ID must be a non-empty string');
+        }
+
+        const validBehaviors = ['collaborative', 'competitive', 'neutral'];
+        if (!validBehaviors.includes(behavior)) {
+            throw new Error(`ChatManager: Invalid behavior type. Must be one of: ${validBehaviors.join(', ')}`);
+        }
+
+        const session = this.getChat(sessionId);
+        if (!session) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        // Set group behavior
+        this.groupBehaviors.set(sessionId, {
+            type: behavior,
+            options: {
+                ...this.getDefaultBehaviorOptions(behavior),
+                ...options
+            },
+            createdAt: Date.now()
+        });
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatGroupBehavior.${sessionId}`, this.groupBehaviors.get(sessionId));
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:groupBehavior:set', {
+                sessionId,
+                session,
+                behavior: this.groupBehaviors.get(sessionId)
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Set group behavior for session '${sessionId}' to '${behavior}'`);
+        }
+
+        return true;
+    }
+
+    /**
+     * Get group behavior for a session
+     * @param {string} sessionId - The session ID
+     * @returns {Object|null} Group behavior configuration or null if not set
+     */
+    getGroupBehavior(sessionId) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            return null;
+        }
+        return this.groupBehaviors.get(sessionId) || null;
+    }
+
+    /**
+     * Get default behavior options for a behavior type
+     * @param {string} behavior - Behavior type
+     * @returns {Object} Default options
+     */
+    getDefaultBehaviorOptions(behavior) {
+        const defaults = {
+            collaborative: {
+                enableCooperation: true,
+                sharedGoals: true,
+                conflictResolution: 'consensus',
+                turnSharing: true
+            },
+            competitive: {
+                enableCompetition: true,
+                individualGoals: true,
+                conflictResolution: 'winner',
+                turnSharing: false
+            },
+            neutral: {
+                enableCooperation: false,
+                enableCompetition: false,
+                conflictResolution: 'neutral',
+                turnSharing: false
+            }
+        };
+        return defaults[behavior] || defaults.neutral;
+    }
+
+    /**
+     * Start participant synchronization for a session
+     * @param {string} sessionId - The session ID
+     * @returns {Promise<boolean>} Success status
+     */
+    async startSynchronization(sessionId) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            throw new Error('ChatManager: Session ID must be a non-empty string');
+        }
+
+        const session = this.getChat(sessionId);
+        if (!session) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        // Stop existing synchronization if running
+        this.stopSynchronization(sessionId);
+
+        // Start new synchronization timer
+        const timer = setInterval(async () => {
+            await this.synchronizeParticipants(sessionId);
+        }, this.groupChatConfig.syncInterval);
+
+        this.synchronizationTimers.set(sessionId, timer);
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Started participant synchronization for session '${sessionId}'`);
+        }
+
+        return true;
+    }
+
+    /**
+     * Stop participant synchronization for a session
+     * @param {string} sessionId - The session ID
+     * @returns {boolean} Success status
+     */
+    stopSynchronization(sessionId) {
+        const timer = this.synchronizationTimers.get(sessionId);
+        if (timer) {
+            clearInterval(timer);
+            this.synchronizationTimers.delete(sessionId);
+            
+            if (this.debugMode) {
+                console.log(`ChatManager: Stopped participant synchronization for session '${sessionId}'`);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Synchronize participant states for a session
+     * @param {string} sessionId - The session ID
+     * @returns {Promise<Object>} Synchronization result
+     */
+    async synchronizeParticipants(sessionId) {
+        const session = this.getChat(sessionId);
+        if (!session) {
+            return { success: false, error: 'Session not found' };
+        }
+
+        const participantStates = this.participantStates.get(sessionId);
+        if (!participantStates) {
+            return { success: false, error: 'No participant states' };
+        }
+
+        const now = Date.now();
+        const syncData = {
+            sessionId,
+            timestamp: now,
+            participants: {},
+            currentTurn: this.getCurrentTurn(sessionId),
+            turnOrder: this.getTurnOrder(sessionId),
+            groupBehavior: this.getGroupBehavior(sessionId)
+        };
+
+        // Collect participant states
+        for (const [participantId, state] of participantStates) {
+            syncData.participants[participantId] = {
+                ...state,
+                lastSync: now,
+                isOnline: true // In a real implementation, this would check actual online status
+            };
+        }
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatSynchronization.${sessionId}`, syncData);
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:participants:synchronized', syncData);
+        }
+
+        return { success: true, data: syncData };
+    }
+
+    /**
+     * Get participant state for a session
+     * @param {string} sessionId - The session ID
+     * @param {string} participantId - The participant ID
+     * @returns {Object|null} Participant state or null if not found
+     */
+    getParticipantState(sessionId, participantId) {
+        const participantStates = this.participantStates.get(sessionId);
+        if (!participantStates) {
+            return null;
+        }
+        return participantStates.get(participantId) || null;
+    }
+
+    /**
+     * Update participant state
+     * @param {string} sessionId - The session ID
+     * @param {string} participantId - The participant ID
+     * @param {Object} updates - State updates
+     * @returns {Promise<boolean>} Success status
+     */
+    async updateParticipantState(sessionId, participantId, updates) {
+        const participantStates = this.participantStates.get(sessionId);
+        if (!participantStates) {
+            throw new Error(`ChatManager: No participant states for session '${sessionId}'`);
+        }
+
+        const currentState = participantStates.get(participantId);
+        if (!currentState) {
+            throw new Error(`ChatManager: Participant '${participantId}' not found in session '${sessionId}'`);
+        }
+
+        // Update state
+        const updatedState = {
+            ...currentState,
+            ...updates,
+            lastUpdated: Date.now()
+        };
+
+        participantStates.set(participantId, updatedState);
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatParticipantStates.${sessionId}`, Object.fromEntries(participantStates));
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:participantState:updated', {
+                sessionId,
+                participantId,
+                state: updatedState,
+                previousState: currentState
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Updated participant state for '${participantId}' in session '${sessionId}'`);
+        }
+
+        return true;
+    }
+
+    /**
+     * Get group chat statistics
+     * @param {string} sessionId - The session ID
+     * @returns {Object|null} Group chat statistics or null if session not found
+     */
+    getGroupChatStats(sessionId) {
+        const session = this.getChat(sessionId);
+        if (!session) {
+            return null;
+        }
+
+        const turnOrder = this.getTurnOrder(sessionId);
+        const participantStates = this.participantStates.get(sessionId);
+        const groupBehavior = this.getGroupBehavior(sessionId);
+        const messages = this.messages.get(sessionId) || [];
+
+        // Calculate turn statistics
+        let totalTurns = 0;
+        let averageTurnTime = 0;
+        const turnTimes = [];
+
+        if (participantStates) {
+            for (const [participantId, state] of participantStates) {
+                if (state.turnCount) {
+                    totalTurns += state.turnCount;
+                }
+            }
+        }
+
+        // Calculate message distribution by participant
+        const messageDistribution = {};
+        messages.forEach(msg => {
+            messageDistribution[msg.senderId] = (messageDistribution[msg.senderId] || 0) + 1;
+        });
+
+        return {
+            sessionId,
+            participantCount: session.participantIds.length,
+            hasTurnOrder: turnOrder !== null,
+            currentTurn: this.getCurrentTurn(sessionId),
+            totalTurns,
+            averageTurnTime,
+            messageDistribution,
+            groupBehavior: groupBehavior?.type || 'none',
+            synchronizationActive: this.synchronizationTimers.has(sessionId),
+            lastSync: participantStates ? Math.max(...Array.from(participantStates.values()).map(s => s.lastUpdated || 0)) : null
+        };
+    }
+
     /**
      * Clean up resources
      */
     destroy() {
         this.stopAutoSave();
+        
+        // Stop all synchronization timers
+        for (const [sessionId, timer] of this.synchronizationTimers) {
+            clearInterval(timer);
+        }
+        
         this.sessions.clear();
         this.participants.clear();
         this.sessionMetadata.clear();
         this.messages.clear();
+        this.turnOrder.clear();
+        this.participantStates.clear();
+        this.groupBehaviors.clear();
+        this.synchronizationTimers.clear();
         
         if (this.debugMode) {
             console.log('ChatManager: Destroyed');
