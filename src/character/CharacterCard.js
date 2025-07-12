@@ -5,9 +5,11 @@
  * Supports Character Card V2 specification with comprehensive validation.
  * 
  * Task 2.2.2: Character Card Validation
+ * Task 2.2.3: Format Conversion
  */
 
 const { PNGMetadataExtractor } = require('./PNGMetadataExtractor.js');
+const yaml = require('js-yaml');
 
 class CharacterCard {
     constructor(data = null) {
@@ -62,25 +64,36 @@ class CharacterCard {
      */
     static async fromPNG(file) {
         const extractor = new PNGMetadataExtractor();
-        const metadata = await extractor.extract(file);
-        
+        const metadataResult = await extractor.extract(file);
+
         let characterData = null;
-        
+        let metadata = {};
+
         // Try V2 format first (chara chunk)
-        if (metadata.chara) {
-            characterData = metadata.chara;
+        if (metadataResult.chara) {
+            characterData = metadataResult.chara;
         }
         // Fallback to V3 format (ccv3 chunk)
-        else if (metadata.ccv3) {
-            characterData = metadata.ccv3;
+        else if (metadataResult.ccv3) {
+            characterData = metadataResult.ccv3;
         }
         else {
             throw new Error('No character data found in PNG file');
         }
-        
+
+        // If the extractor result has a 'metadata' property, use it as metadata
+        if (metadataResult.metadata) {
+            metadata = metadataResult.metadata;
+        } else {
+            // Otherwise, use all other keys except chara/ccv3 as metadata
+            metadata = { ...metadataResult };
+            delete metadata.chara;
+            delete metadata.ccv3;
+        }
+
         const card = new CharacterCard(characterData);
         card.metadata = metadata;
-        
+
         return card;
     }
 
@@ -102,7 +115,25 @@ class CharacterCard {
             parsedData = data;
         }
         
-        return new CharacterCard(parsedData);
+        // Extract metadata if present
+        let metadata = {};
+        let characterData = { ...parsedData };
+        
+        if (parsedData._metadata) {
+            metadata = { ...parsedData._metadata };
+            // Remove conversion info from metadata to avoid duplication
+            delete metadata.conversion;
+            delete characterData._metadata;
+        }
+        
+        if (parsedData._conversion) {
+            delete characterData._conversion;
+        }
+        
+        const card = new CharacterCard(characterData);
+        card.metadata = metadata;
+        
+        return card;
     }
 
     /**
@@ -392,6 +423,250 @@ class CharacterCard {
             size: file.size || 0,
             timestamp: Date.now()
         };
+    }
+
+    // Task 2.2.3: Format Conversion Methods
+
+    /**
+     * Convert character card to JSON format
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.pretty - Whether to format with indentation
+     * @param {boolean} options.includeMetadata - Whether to include PNG metadata
+     * @returns {string} JSON representation
+     */
+    toJSONFormat(options = {}) {
+        const { pretty = true, includeMetadata = false } = options;
+        
+        let outputData = { ...this.data };
+        
+        // Always include _metadata if requested
+        if (includeMetadata) {
+            outputData._metadata = this.metadata ? { ...this.metadata } : {};
+            outputData._metadata.conversion = {
+                timestamp: new Date().toISOString(),
+                source: 'png',
+                target: 'json',
+                version: '2.0'
+            };
+        }
+        
+        // Add conversion metadata
+        outputData._conversion = {
+            timestamp: new Date().toISOString(),
+            source: 'png',
+            target: 'json',
+            version: '2.0'
+        };
+        
+        return pretty ? JSON.stringify(outputData, null, 2) : JSON.stringify(outputData);
+    }
+
+    /**
+     * Convert character card to YAML format
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.includeMetadata - Whether to include PNG metadata
+     * @param {number} options.indent - YAML indentation level
+     * @returns {string} YAML representation
+     */
+    toYAMLFormat(options = {}) {
+        const { includeMetadata = false, indent = 2 } = options;
+        
+        let outputData = { ...this.data };
+        
+        // Always include _metadata if requested
+        if (includeMetadata) {
+            outputData._metadata = this.metadata ? { ...this.metadata } : {};
+            outputData._metadata.conversion = {
+                timestamp: new Date().toISOString(),
+                source: 'png',
+                target: 'yaml',
+                version: '2.0'
+            };
+        }
+        
+        // Add conversion metadata
+        outputData._conversion = {
+            timestamp: new Date().toISOString(),
+            source: 'png',
+            target: 'yaml',
+            version: '2.0'
+        };
+        
+        try {
+            return yaml.dump(outputData, {
+                indent: Math.max(1, Math.min(8, indent || 2)), // Ensure valid indent range
+                lineWidth: 120,
+                noRefs: true,
+                sortKeys: true
+            });
+        } catch (error) {
+            throw new Error(`YAML conversion failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Create CharacterCard from YAML data
+     * @param {string} yamlData - YAML string
+     * @returns {CharacterCard} CharacterCard instance
+     */
+    static fromYAML(yamlData) {
+        if (typeof yamlData !== 'string') {
+            throw new Error('YAML data must be a string');
+        }
+        
+        try {
+            const parsedData = yaml.load(yamlData);
+            
+            if (!parsedData || typeof parsedData !== 'object') {
+                throw new Error('Invalid YAML data: must be an object');
+            }
+            
+            // Extract metadata if present
+            let metadata = {};
+            let characterData = { ...parsedData };
+            
+            if (parsedData._metadata) {
+                metadata = { ...parsedData._metadata };
+                // Remove conversion info from metadata to avoid duplication
+                delete metadata.conversion;
+                delete characterData._metadata;
+            }
+            
+            if (parsedData._conversion) {
+                delete characterData._conversion;
+            }
+            
+            const card = new CharacterCard(characterData);
+            card.metadata = metadata;
+            
+            return card;
+        } catch (error) {
+            throw new Error(`YAML parsing failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Convert PNG character card to JSON format
+     * @param {File|Blob} pngFile - PNG file with embedded character data
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.pretty - Whether to format with indentation
+     * @param {boolean} options.includeMetadata - Whether to include PNG metadata
+     * @returns {Promise<string>} JSON representation
+     */
+    static async pngToJSON(pngFile, options = {}) {
+        const card = await CharacterCard.fromPNG(pngFile);
+        return card.toJSONFormat(options);
+    }
+
+    /**
+     * Convert PNG character card to YAML format
+     * @param {File|Blob} pngFile - PNG file with embedded character data
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.includeMetadata - Whether to include PNG metadata
+     * @param {number} options.indent - YAML indentation level
+     * @returns {Promise<string>} YAML representation
+     */
+    static async pngToYAML(pngFile, options = {}) {
+        const card = await CharacterCard.fromPNG(pngFile);
+        return card.toYAMLFormat(options);
+    }
+
+    /**
+     * Convert JSON character card to YAML format
+     * @param {Object|string} jsonData - Character data as object or JSON string
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.includeMetadata - Whether to include metadata
+     * @param {number} options.indent - YAML indentation level
+     * @returns {string} YAML representation
+     */
+    static jsonToYAML(jsonData, options = {}) {
+        const card = CharacterCard.fromJSON(jsonData);
+        return card.toYAMLFormat(options);
+    }
+
+    /**
+     * Convert YAML character card to JSON format
+     * @param {string} yamlData - YAML string
+     * @param {Object} options - Conversion options
+     * @param {boolean} options.pretty - Whether to format with indentation
+     * @param {boolean} options.includeMetadata - Whether to include metadata
+     * @returns {string} JSON representation
+     */
+    static yamlToJSON(yamlData, options = {}) {
+        const card = CharacterCard.fromYAML(yamlData);
+        return card.toJSONFormat(options);
+    }
+
+    /**
+     * Get format conversion statistics
+     * @returns {Object} Conversion statistics
+     */
+    getConversionStats() {
+        const originalSize = JSON.stringify(this.data).length;
+        const jsonSize = this.toJSONFormat({ pretty: false }).length;
+        const yamlSize = this.toYAMLFormat().length;
+        
+        const stats = {
+            sourceFormat: 'png',
+            targetFormats: ['json', 'yaml'],
+            dataSize: {
+                original: originalSize,
+                json: jsonSize,
+                yaml: yamlSize
+            },
+            compressionRatio: {
+                json: 0,
+                yaml: 0
+            },
+            metadata: {
+                hasMetadata: !!(this.metadata && Object.keys(this.metadata).length > 0),
+                metadataSize: this.metadata && Object.keys(this.metadata).length > 0 ? JSON.stringify(this.metadata).length : 0
+            }
+        };
+        
+        // Calculate compression ratios (percentage of original size)
+        stats.compressionRatio.json = originalSize > 0 ? (jsonSize / originalSize) * 100 : 0;
+        stats.compressionRatio.yaml = originalSize > 0 ? (yamlSize / originalSize) * 100 : 0;
+        
+        return stats;
+    }
+
+    /**
+     * Optimize character data for specific format
+     * @param {string} format - Target format ('json', 'yaml')
+     * @param {Object} options - Optimization options
+     * @returns {Object} Optimized character data
+     */
+    optimizeForFormat(format, options = {}) {
+        const optimized = { ...this.data };
+        
+        switch (format.toLowerCase()) {
+            case 'json':
+                // JSON optimizations
+                if (options.removeEmptyFields) {
+                    Object.keys(optimized).forEach(key => {
+                        if (optimized[key] === null || optimized[key] === undefined || 
+                            (typeof optimized[key] === 'string' && optimized[key].trim() === '')) {
+                            delete optimized[key];
+                        }
+                    });
+                }
+                break;
+                
+            case 'yaml':
+                // YAML optimizations
+                if (options.preserveComments) {
+                    // YAML supports comments, so we can keep more metadata
+                    optimized._format = 'yaml';
+                    optimized._optimized = true;
+                }
+                break;
+                
+            default:
+                throw new Error(`Unsupported format: ${format}`);
+        }
+        
+        return optimized;
     }
 }
 

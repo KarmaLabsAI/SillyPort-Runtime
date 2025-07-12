@@ -24,7 +24,9 @@
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
   "engines": {
     "node": ">=16.0.0"
   },
@@ -36,4 +38,4 @@
     "url": "https://github.com/KarmaLabsAI/SillyPort-Runtime/issues"
   },
   "homepage": "https://github.com/KarmaLabsAI/SillyPort-Runtime#readme"
-} 
+}
