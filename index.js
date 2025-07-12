@@ -13,6 +13,8 @@ const EventBus = require('./src/core/EventBus');
 const StateManager = require('./src/core/StateManager');
 const ConfigManager = require('./src/core/ConfigManager');
 const StorageManager = require('./src/core/StorageManager');
+const ChatManager = require('./src/chat/ChatManager');
+const { FormatImporter } = require('./src/chat/FormatImporter');
 
 // Export everything
 module.exports = {
@@ -20,7 +22,9 @@ module.exports = {
     EventBus,
     StateManager,
     ConfigManager,
-    StorageManager
+    StorageManager,
+    ChatManager,
+    FormatImporter
 };
 
 // For browser environments, attach to global object
@@ -30,4 +34,6 @@ if (typeof window !== 'undefined') {
     window.StateManager = StateManager;
     window.ConfigManager = ConfigManager;
     window.StorageManager = StorageManager;
+    window.ChatManager = ChatManager;
+    window.FormatImporter = FormatImporter;
 } 

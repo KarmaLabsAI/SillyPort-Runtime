@@ -210,13 +210,77 @@ class FormatImporter {
     }
 
     /**
-     * Parse Agnai format messages (placeholder implementation)
+     * Parse Agnai format messages
      * @param {Object} data - Agnai format data
      * @returns {Array} Array of parsed messages
      */
     parseAgnaiMessages(data) {
-        // Placeholder implementation
-        return [];
+        if (!data || typeof data !== 'object') {
+            return [];
+        }
+
+        if (!Array.isArray(data.messages)) {
+            return [];
+        }
+
+        const messages = [];
+        let messageIndex = 0;
+
+        for (const message of data.messages) {
+            messageIndex++;
+            
+            // Validate required fields
+            if (!message.id || !message.content || !message.role) {
+                if (this.debugMode) {
+                    console.log(`FormatImporter: Skipping invalid Agnai message at index ${messageIndex}`, message);
+                }
+                continue;
+            }
+
+            // Normalize role to standard format
+            let normalizedRole = message.role.toLowerCase();
+            if (normalizedRole === 'human') {
+                normalizedRole = 'user';
+            } else if (normalizedRole === 'assistant' || normalizedRole === 'character') {
+                normalizedRole = 'assistant';
+            }
+
+            // Create parsed message object
+            const parsedMessage = {
+                id: message.id,
+                sender: normalizedRole,
+                role: normalizedRole,
+                content: message.content.trim(),
+                timestamp: message.timestamp || Date.now() + messageIndex, // Ensure unique timestamps
+                metadata: {
+                    originalFormat: 'agnai',
+                    originalRole: message.role,
+                    messageIndex: messageIndex,
+                    agnaiId: message.id
+                }
+            };
+
+            // Add additional metadata if available
+            if (message.metadata) {
+                parsedMessage.metadata.originalMetadata = message.metadata;
+            }
+
+            if (message.avatar) {
+                parsedMessage.metadata.avatar = message.avatar;
+            }
+
+            if (message.name) {
+                parsedMessage.metadata.originalName = message.name;
+            }
+
+            messages.push(parsedMessage);
+        }
+
+        if (this.debugMode) {
+            console.log(`FormatImporter: Parsed ${messages.length} Agnai messages`);
+        }
+
+        return messages;
     }
 
     /**
@@ -335,21 +399,117 @@ class FormatImporter {
     }
 
     /**
-     * Import Agnai format chat (placeholder implementation)
+     * Import Agnai format chat
      * @param {Object} data - Agnai format data
      * @param {Object} options - Import options
      * @returns {Promise<Object>} Import result
      */
     async importAgnaiChat(data, options = {}) {
         if (!data || typeof data !== 'object') {
-            throw new Error('FormatImporter: Agnai format requires messages array');
+            throw new Error('FormatImporter: Agnai format requires object data');
         }
         if (!Array.isArray(data.messages)) {
             throw new Error('FormatImporter: Agnai format requires messages array');
         }
 
-        // Placeholder implementation for full Agnai import
-        throw new Error('FormatImporter: Agnai format not yet implemented');
+        const messages = this.parseAgnaiMessages(data);
+        
+        if (messages.length === 0) {
+            throw new Error('FormatImporter: No valid messages found in Agnai data');
+        }
+
+        // Extract Agnai-specific metadata
+        const agnaiMetadata = {
+            userId: data.userId || null,
+            characterId: data.characterId || null,
+            characterName: data.characterName || null
+        };
+
+        // Determine participants from messages and metadata
+        const participants = options.participants || this.extractParticipantsFromAgnaiData(data, messages);
+
+        // Create chat session
+        const session = await this.chatManager.createChat(participants, {
+            title: options.metadata?.title || `Imported Agnai Chat${agnaiMetadata.characterName ? ` - ${agnaiMetadata.characterName}` : ''}`,
+            metadata: {
+                importFormat: 'agnai',
+                importTimestamp: Date.now(),
+                originalMessageCount: messages.length,
+                agnaiData: agnaiMetadata,
+                ...options.metadata
+            }
+        });
+
+        // Add messages to session
+        const importedMessages = [];
+        for (const message of messages) {
+            const importedMessage = await this.chatManager.addMessage(
+                session.id,
+                message.sender,
+                message.content,
+                {
+                    role: message.role,
+                    timestamp: message.timestamp,
+                    metadata: {
+                        ...message.metadata,
+                        imported: true,
+                        agnaiId: message.id
+                    }
+                }
+            );
+            importedMessages.push(importedMessage);
+        }
+
+        // Emit import event
+        this.eventBus.emit('chat:imported', {
+            format: 'agnai',
+            sessionId: session.id,
+            messageCount: messages.length,
+            metadata: {
+                ...agnaiMetadata,
+                ...options.metadata
+            }
+        });
+
+        return {
+            format: 'agnai',
+            session: session,
+            messages: importedMessages,
+            messageCount: messages.length,
+            agnaiMetadata: agnaiMetadata
+        };
+    }
+
+    /**
+     * Extract participants from Agnai data
+     * @param {Object} data - Agnai format data
+     * @param {Array} messages - Parsed messages
+     * @returns {Array} Array of participant IDs
+     */
+    extractParticipantsFromAgnaiData(data, messages) {
+        const participants = new Set();
+        
+        // Add character name if available
+        if (data.characterName) {
+            participants.add(data.characterName);
+        }
+        
+        // Add user identifier
+        if (data.userId) {
+            participants.add(data.userId);
+        } else {
+            // Fallback to 'user' if no userId
+            participants.add('user');
+        }
+        
+        // Add participants from messages
+        for (const message of messages) {
+            if (message.sender && message.sender !== 'system') {
+                participants.add(message.sender);
+            }
+        }
+        
+        return Array.from(participants);
     }
 
     /**
