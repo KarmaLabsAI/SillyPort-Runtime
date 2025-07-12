@@ -15,8 +15,8 @@
  *   - State comparison and diff detection
  */
 
-const EventBus = require('../src/core/EventBus');
-const StateManager = require('../src/core/StateManager');
+const EventBus = require('../../src/core/EventBus');
+const StateManager = require('../../src/core/StateManager');
 
 describe('StateManager', () => {
     let stateManager;

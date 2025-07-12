@@ -4,9 +4,15 @@
   "description": "SillyTavern Browser Runtime - A browser-based runtime for SillyTavern character management and chat functionality",
   "main": "src/index.js",
   "scripts": {
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test": "jest --config jest.config.node.js",
+    "test:watch": "jest --config jest.config.node.js --watch",
+    "test:coverage": "jest --config jest.config.node.js --coverage",
+    "test:browser": "jest --config jest.config.js",
+    "test:browser-html": "echo 'Open browser-tests.html in a web browser to run browser-specific tests'",
+    "test:all": "npm test && echo 'Node.js tests completed. Run browser tests with: npm run test:browser'",
+    "test:node": "npm test",
+    "test:node:watch": "npm run test:watch",
+    "test:node:coverage": "npm run test:coverage",
     "build": "echo 'Build process not yet implemented'",
     "dev": "echo 'Development server not yet implemented'"
   },

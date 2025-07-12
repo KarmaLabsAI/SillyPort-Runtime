@@ -5,7 +5,7 @@
  */
 
 // Import EventBus (adjust path as needed)
-const EventBus = require('../src/core/EventBus.js');
+const EventBus = require('../../src/core/EventBus.js');
 
 describe('EventBus', () => {
     let eventBus;

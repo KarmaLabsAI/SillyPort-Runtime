@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SillyTavern Runtime - Browser Tests</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .pass {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .fail {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .error {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .skip {
+            background-color: #e2e3e5;
+            color: #383d41;
+            border: 1px solid #d6d8db;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .summary {
+            background-color: #e7f3ff;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .test-group {
+            margin: 15px 0;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background-color: #f8f9fa;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #28a745;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SillyTavern Runtime - Browser Tests</h1>
+        <p>This page runs all tests that require real browser APIs (IndexedDB, localStorage, etc.)</p>
+        
+        <div class="summary">
+            <h3>Test Summary</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <div id="test-summary">
+                <strong>Total Tests:</strong> <span id="total-tests">0</span> |
+                <strong>Passed:</strong> <span id="passed-tests" style="color: #28a745">0</span> |
+                <strong>Failed:</strong> <span id="failed-tests" style="color: #dc3545">0</span> |
+                <strong>Skipped:</strong> <span id="skipped-tests" style="color: #6c757d">0</span>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Controls</h2>
+            <button onclick="runAllTests()">Run All Browser Tests</button>
+            <button onclick="runStorageTests()">Run Storage Tests Only</button>
+            <button onclick="runRuntimeTests()">Run Runtime Tests Only</button>
+            <button onclick="runChatTests()">Run Chat Tests Only</button>
+            <button onclick="clearResults()">Clear Results</button>
+        </div>
+
+        <div class="test-section">
+            <h2>StorageManager Tests (Browser APIs)</h2>
+            <div class="test-group">
+                <h3>IndexedDB Integration</h3>
+                <button onclick="runStorageIndexedDBTests()">Run IndexedDB Tests</button>
+                <div id="storage-indexeddb-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>localStorage Integration</h3>
+                <button onclick="runStorageLocalStorageTests()">Run localStorage Tests</button>
+                <div id="storage-localstorage-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>Storage Persistence</h3>
+                <button onclick="runStoragePersistenceTests()">Run Persistence Tests</button>
+                <div id="storage-persistence-results"></div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>SillyTavernRuntime Tests (Full Integration)</h2>
+            <div class="test-group">
+                <h3>Runtime Initialization</h3>
+                <button onclick="runRuntimeInitTests()">Run Initialization Tests</button>
+                <div id="runtime-init-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>Component Integration</h3>
+                <button onclick="runRuntimeComponentTests()">Run Component Tests</button>
+                <div id="runtime-component-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>Lifecycle Events</h3>
+                <button onclick="runRuntimeLifecycleTests()">Run Lifecycle Tests</button>
+                <div id="runtime-lifecycle-results"></div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>ChatManager Tests (Full Integration)</h2>
+            <div class="test-group">
+                <h3>Chat Session Management</h3>
+                <button onclick="runChatSessionTests()">Run Session Tests</button>
+                <div id="chat-session-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>Message Management</h3>
+                <button onclick="runChatMessageTests()">Run Message Tests</button>
+                <div id="chat-message-results"></div>
+            </div>
+            
+            <div class="test-group">
+                <h3>Storage Integration</h3>
+                <button onclick="runChatStorageTests()">Run Storage Tests</button>
+                <div id="chat-storage-results"></div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Results</h2>
+            <div id="all-results"></div>
+        </div>
+    </div>
+
+    <!-- Load the browser-compatible bundle -->
+    <script src="dist/sillyport-runtime.browser.js"></script>
+    
+    <script>
+        // Global test state
+        let testResults = {
+            total: 0,
+            passed: 0,
+            failed: 0,
+            skipped: 0
+        };
+
+        // Test utilities
+        function assert(condition, message) {
+            if (!condition) {
+                throw new Error(message || 'Assertion failed');
+            }
+        }
+
+        function test(name, testFunction) {
+            testResults.total++;
+            try {
+                testFunction();
+                testResults.passed++;
+                showResult(`✓ ${name}`, 'pass', 'all-results');
+                return true;
+            } catch (error) {
+                testResults.failed++;
+                showResult(`✗ ${name}: ${error.message}`, 'fail', 'all-results');
+                return false;
+            }
+        }
+
+        function skip(name, reason) {
+            testResults.skipped++;
+            showResult(`⏭ ${name}: ${reason}`, 'skip', 'all-results');
+        }
+
+        function updateSummary() {
+            document.getElementById('total-tests').textContent = testResults.total;
+            document.getElementById('passed-tests').textContent = testResults.passed;
+            document.getElementById('failed-tests').textContent = testResults.failed;
+            document.getElementById('skipped-tests').textContent = testResults.skipped;
+            
+            const percentage = testResults.total > 0 ? (testResults.passed / testResults.total) * 100 : 0;
+            document.getElementById('progress-fill').style.width = percentage + '%';
+        }
+
+        function showResult(message, type, elementId) {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            document.getElementById(elementId).appendChild(div);
+            updateSummary();
+        }
+
+        function clearResults() {
+            testResults = { total: 0, passed: 0, failed: 0, skipped: 0 };
+            document.getElementById('all-results').innerHTML = '';
+            document.getElementById('storage-indexeddb-results').innerHTML = '';
+            document.getElementById('storage-localstorage-results').innerHTML = '';
+            document.getElementById('storage-persistence-results').innerHTML = '';
+            document.getElementById('runtime-init-results').innerHTML = '';
+            document.getElementById('runtime-component-results').innerHTML = '';
+            document.getElementById('runtime-lifecycle-results').innerHTML = '';
+            document.getElementById('chat-session-results').innerHTML = '';
+            document.getElementById('chat-message-results').innerHTML = '';
+            document.getElementById('chat-storage-results').innerHTML = '';
+            updateSummary();
+        }
+
+        // StorageManager Tests
+        async function runStorageIndexedDBTests() {
+            console.log('=== Running StorageManager IndexedDB Tests ===');
+            
+            test('IndexedDB is available', () => {
+                assert(typeof indexedDB !== 'undefined', 'IndexedDB should be available in browser');
+            });
+
+            test('StorageManager can be created', () => {
+                const storageManager = new StorageManager();
+                assert(storageManager instanceof StorageManager, 'StorageManager should be instantiable');
+            });
+
+            test('StorageManager can initialize', async () => {
+                const storageManager = new StorageManager();
+                const result = await storageManager.init();
+                assert(result === true, 'StorageManager should initialize successfully');
+                await storageManager.close();
+            });
+
+            test('StorageManager can save and load data', async () => {
+                const storageManager = new StorageManager();
+                await storageManager.init();
+                
+                const testData = { id: 'test1', name: 'Test Character' };
+                await storageManager.save('characters', testData);
+                
+                const loadedData = await storageManager.load('characters', 'test1');
+                assert(loadedData.name === 'Test Character', 'Loaded data should match saved data');
+                
+                await storageManager.close();
+            });
+
+            test('StorageManager can handle multiple object stores', async () => {
+                const storageManager = new StorageManager();
+                await storageManager.init();
+                
+                // Test characters store
+                await storageManager.save('characters', { id: 'char1', name: 'Character 1' });
+                
+                // Test chats store
+                await storageManager.save('chats', { id: 'chat1', characterId: 'char1' });
+                
+                const character = await storageManager.load('characters', 'char1');
+                const chat = await storageManager.load('chats', 'chat1');
+                
+                assert(character.name === 'Character 1', 'Character should be saved and loaded');
+                assert(chat.characterId === 'char1', 'Chat should be saved and loaded');
+                
+                await storageManager.close();
+            });
+        }
+
+        async function runStorageLocalStorageTests() {
+            console.log('=== Running StorageManager localStorage Tests ===');
+            
+            test('localStorage is available', () => {
+                assert(typeof localStorage !== 'undefined', 'localStorage should be available in browser');
+            });
+
+            test('ConfigManager can use localStorage', () => {
+                const configManager = new ConfigManager();
+                configManager.set('test.key', 'test-value');
+                const value = configManager.get('test.key');
+                assert(value === 'test-value', 'ConfigManager should persist to localStorage');
+            });
+        }
+
+        async function runStoragePersistenceTests() {
+            console.log('=== Running StorageManager Persistence Tests ===');
+            
+            test('Data persists across StorageManager instances', async () => {
+                // First instance
+                const storage1 = new StorageManager();
+                await storage1.init();
+                await storage1.save('characters', { id: 'persist1', name: 'Persistent Character' });
+                await storage1.close();
+                
+                // Second instance
+                const storage2 = new StorageManager();
+                await storage2.init();
+                const loaded = await storage2.load('characters', 'persist1');
+                assert(loaded.name === 'Persistent Character', 'Data should persist across instances');
+                await storage2.close();
+            });
+        }
+
+        // SillyTavernRuntime Tests
+        async function runRuntimeInitTests() {
+            console.log('=== Running SillyTavernRuntime Initialization Tests ===');
+            
+            test('Runtime can be created', () => {
+                const runtime = new SillyTavernRuntime();
+                assert(runtime instanceof SillyTavernRuntime, 'Runtime should be instantiable');
+            });
+
+            test('Runtime can initialize with default options', async () => {
+                const runtime = new SillyTavernRuntime();
+                const result = await runtime.init();
+                assert(result === true, 'Runtime should initialize successfully');
+                assert(runtime.initialized === true, 'Runtime should be marked as initialized');
+                await runtime.destroy();
+            });
+
+            test('Runtime prevents double initialization', async () => {
+                const runtime = new SillyTavernRuntime();
+                await runtime.init();
+                
+                try {
+                    await runtime.init();
+                    assert(false, 'Should not allow double initialization');
+                } catch (error) {
+                    assert(error.message.includes('already initialized'), 'Should throw appropriate error');
+                }
+                
+                await runtime.destroy();
+            });
+        }
+
+        async function runRuntimeComponentTests() {
+            console.log('=== Running SillyTavernRuntime Component Tests ===');
+            
+            test('Runtime has all core components after initialization', async () => {
+                const runtime = new SillyTavernRuntime();
+                await runtime.init();
+                
+                assert(runtime.eventBus instanceof EventBus, 'Should have EventBus');
+                assert(runtime.stateManager instanceof StateManager, 'Should have StateManager');
+                assert(runtime.configManager instanceof ConfigManager, 'Should have ConfigManager');
+                assert(runtime.storageManager instanceof StorageManager, 'Should have StorageManager');
+                
+                await runtime.destroy();
+            });
+
+            test('Runtime can access components', async () => {
+                const runtime = new SillyTavernRuntime();
+                await runtime.init();
+                
+                const eventBus = runtime.getComponent('eventBus');
+                const stateManager = runtime.getComponent('stateManager');
+                
+                assert(eventBus instanceof EventBus, 'Should be able to get EventBus component');
+                assert(stateManager instanceof StateManager, 'Should be able to get StateManager component');
+                
+                await runtime.destroy();
+            });
+        }
+
+        async function runRuntimeLifecycleTests() {
+            console.log('=== Running SillyTavernRuntime Lifecycle Tests ===');
+            
+            test('Runtime emits lifecycle events', async () => {
+                const runtime = new SillyTavernRuntime();
+                const events = [];
+                
+                runtime.subscribeToLifecycle((eventName, data) => {
+                    events.push(eventName);
+                });
+                
+                await runtime.init();
+                await runtime.destroy();
+                
+                assert(events.includes('runtime:init:start'), 'Should emit init start event');
+                assert(events.includes('runtime:init:complete'), 'Should emit init complete event');
+                assert(events.includes('runtime:destroy:start'), 'Should emit destroy start event');
+                assert(events.includes('runtime:destroy:complete'), 'Should emit destroy complete event');
+            });
+        }
+
+        // ChatManager Tests
+        async function runChatSessionTests() {
+            console.log('=== Running ChatManager Session Tests ===');
+            
+            test('ChatManager can be created with dependencies', async () => {
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                assert(chatManager instanceof ChatManager, 'ChatManager should be instantiable');
+                
+                await storageManager.close();
+            });
+
+            test('ChatManager can create chat sessions', async () => {
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                const session = await chatManager.createChat(['character1', 'character2']);
+                
+                assert(session.id, 'Session should have an ID');
+                assert(session.participantIds.includes('character1'), 'Session should include participants');
+                assert(session.participantIds.includes('character2'), 'Session should include participants');
+                
+                await storageManager.close();
+            });
+        }
+
+        async function runChatMessageTests() {
+            console.log('=== Running ChatManager Message Tests ===');
+            
+            test('ChatManager can add messages to sessions', async () => {
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                const session = await chatManager.createChat(['character1']);
+                
+                const message = await chatManager.addMessage(session.id, 'character1', 'Hello, world!');
+                assert(message.id, 'Message should have an ID');
+                assert(message.content === 'Hello, world!', 'Message should have correct content');
+                assert(message.senderId === 'character1', 'Message should have correct sender');
+                
+                await storageManager.close();
+            });
+        }
+
+        async function runChatStorageTests() {
+            console.log('=== Running ChatManager Storage Tests ===');
+            
+            test('Chat sessions persist to storage', async () => {
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                const session = await chatManager.createChat(['character1']);
+                
+                // Simulate storage persistence by checking if session is in storage
+                const sessions = await storageManager.getAll('chats');
+                const foundSession = sessions.find(s => s.id === session.id);
+                assert(foundSession, 'Session should be persisted to storage');
+                
+                await storageManager.close();
+            });
+        }
+
+        // Test runners
+        async function runStorageTests() {
+            clearResults();
+            await runStorageIndexedDBTests();
+            await runStorageLocalStorageTests();
+            await runStoragePersistenceTests();
+        }
+
+        async function runRuntimeTests() {
+            clearResults();
+            await runRuntimeInitTests();
+            await runRuntimeComponentTests();
+            await runRuntimeLifecycleTests();
+        }
+
+        async function runChatTests() {
+            clearResults();
+            await runChatSessionTests();
+            await runChatMessageTests();
+            await runChatStorageTests();
+        }
+
+        async function runAllTests() {
+            clearResults();
+            await runStorageTests();
+            await runRuntimeTests();
+            await runChatTests();
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            console.log('SillyTavern Runtime - Browser Tests Page Loaded');
+            console.log('Run tests using the buttons above');
+            updateSummary();
+        });
+    </script>
+</body>
+</html> 

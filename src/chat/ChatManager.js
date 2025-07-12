@@ -23,6 +23,9 @@ class ChatManager {
         // Participant tracking
         this.participants = new Map();
         
+        // Message storage - Map of sessionId -> Array of messages
+        this.messages = new Map();
+        
         // Auto-save configuration
         this.autoSaveEnabled = true;
         this.autoSaveInterval = 30000; // 30 seconds
@@ -507,8 +510,13 @@ class ChatManager {
             const sessionsData = Array.from(this.sessions.entries());
             await this.storageManager.save('chatSessions', sessionsData);
             
+            // Save messages for each session
+            for (const [sessionId, messages] of this.messages) {
+                await this.storageManager.save('chatMessages', sessionId, messages);
+            }
+            
             if (this.debugMode) {
-                console.log(`ChatManager: Saved ${sessionsData.length} sessions to storage`);
+                console.log(`ChatManager: Saved ${sessionsData.length} sessions and ${this.messages.size} message collections to storage`);
             }
             
             return true;
@@ -538,8 +546,19 @@ class ChatManager {
                     this.participants.set(sessionId, new Set(session.participantIds));
                 }
                 
+                // Load messages for each session
+                this.messages.clear();
+                for (const [sessionId, session] of this.sessions) {
+                    const messages = await this.storageManager.load('chatMessages', sessionId);
+                    if (messages && Array.isArray(messages)) {
+                        this.messages.set(sessionId, messages);
+                    } else {
+                        this.messages.set(sessionId, []);
+                    }
+                }
+                
                 if (this.debugMode) {
-                    console.log(`ChatManager: Loaded ${this.sessions.size} sessions from storage`);
+                    console.log(`ChatManager: Loaded ${this.sessions.size} sessions and ${this.messages.size} message collections from storage`);
                 }
             }
             
@@ -596,15 +615,407 @@ class ChatManager {
      * @returns {Object} Runtime statistics
      */
     getStats() {
+        const totalMessages = Array.from(this.messages.values()).reduce((sum, messages) => sum + messages.length, 0);
         return {
             totalSessions: this.sessions.size,
             activeSessions: Array.from(this.sessions.values()).filter(s => s.isActive).length,
             totalParticipants: Array.from(this.participants.values()).reduce((sum, set) => sum + set.size, 0),
+            totalMessages: totalMessages,
             autoSaveEnabled: this.autoSaveEnabled,
             autoSaveInterval: this.autoSaveInterval,
             maxMessagesPerSession: this.maxMessagesPerSession,
             maxMessageLength: this.maxMessageLength,
             debugMode: this.debugMode
+        };
+    }
+
+    /**
+     * Create and add a message to a chat session
+     * @param {string} sessionId - The session ID
+     * @param {string} senderId - The sender's ID (character or user)
+     * @param {string} content - The message content
+     * @param {Object} options - Optional message options
+     * @param {string} options.role - Message role (user, assistant, system)
+     * @param {Object} options.metadata - Additional message metadata
+     * @param {boolean} options.isFormatted - Whether content is pre-formatted
+     * @param {string} options.avatar - Sender avatar URL or data
+     * @returns {Promise<Object>} The created message
+     */
+    async addMessage(sessionId, senderId, content, options = {}) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            throw new Error('ChatManager: Session ID must be a non-empty string');
+        }
+
+        if (!this.sessions.has(sessionId)) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        if (!senderId || typeof senderId !== 'string') {
+            throw new Error('ChatManager: Sender ID must be a non-empty string');
+        }
+
+        if (!content || typeof content !== 'string') {
+            throw new Error('ChatManager: Message content must be a non-empty string');
+        }
+
+        if (content.length > this.maxMessageLength) {
+            throw new Error(`ChatManager: Message content exceeds maximum length of ${this.maxMessageLength} characters`);
+        }
+
+        const { role = 'user', metadata = {}, isFormatted = false, avatar = null } = options;
+
+        // Generate unique message ID
+        this.messageCounter++;
+        const messageId = `msg_${Date.now()}_${this.messageCounter}`;
+
+        // Create message object
+        const message = {
+            id: messageId,
+            sessionId: sessionId,
+            senderId: senderId,
+            content: content,
+            role: role,
+            timestamp: Date.now(),
+            isFormatted: isFormatted,
+            avatar: avatar,
+            metadata: {
+                ...metadata,
+                createdBy: 'ChatManager',
+                version: '1.0.0'
+            }
+        };
+
+        // Add message to storage
+        if (!this.messages.has(sessionId)) {
+            this.messages.set(sessionId, []);
+        }
+        
+        const sessionMessages = this.messages.get(sessionId);
+        sessionMessages.push(message);
+
+        // Enforce message limit
+        if (sessionMessages.length > this.maxMessagesPerSession) {
+            sessionMessages.shift(); // Remove oldest message
+        }
+
+        // Update session metadata
+        const session = this.sessions.get(sessionId);
+        session.messageCount = sessionMessages.length;
+        session.updatedAt = Date.now();
+        this.sessions.set(sessionId, session);
+
+        // Update session metadata
+        const sessionMeta = this.sessionMetadata.get(sessionId) || {};
+        sessionMeta.totalMessages = sessionMessages.length;
+        sessionMeta.lastMessageTime = message.timestamp;
+        
+        // Update participant activity
+        if (!sessionMeta.participantActivity) {
+            sessionMeta.participantActivity = new Map();
+        }
+        sessionMeta.participantActivity.set(senderId, message.timestamp);
+        this.sessionMetadata.set(sessionId, sessionMeta);
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatSessions.${sessionId}`, session);
+            this.stateManager.setState(`chatMessages.${sessionId}`, sessionMessages);
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:message:added', {
+                sessionId,
+                message,
+                session,
+                totalMessages: sessionMessages.length
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Added message '${messageId}' to session '${sessionId}' from '${senderId}'`);
+        }
+
+        return message;
+    }
+
+    /**
+     * Get messages from a chat session
+     * @param {string} sessionId - The session ID
+     * @param {Object} options - Optional filters
+     * @param {number} options.limit - Maximum number of messages to return
+     * @param {number} options.offset - Number of messages to skip
+     * @param {string} options.senderId - Filter by sender ID
+     * @param {string} options.role - Filter by message role
+     * @param {boolean} options.reverse - Return messages in reverse order (newest first)
+     * @returns {Array} Array of messages
+     */
+    getMessages(sessionId, options = {}) {
+        if (!sessionId || typeof sessionId !== 'string') {
+            return [];
+        }
+
+        if (!this.sessions.has(sessionId)) {
+            return [];
+        }
+
+        const { limit = null, offset = 0, senderId = null, role = null, reverse = false } = options;
+        
+        let messages = this.messages.get(sessionId) || [];
+
+        // Apply filters
+        if (senderId) {
+            messages = messages.filter(msg => msg.senderId === senderId);
+        }
+
+        if (role) {
+            messages = messages.filter(msg => msg.role === role);
+        }
+
+        // Apply ordering
+        if (reverse) {
+            messages = [...messages].reverse();
+        }
+
+        // Apply offset and limit
+        if (offset > 0) {
+            messages = messages.slice(offset);
+        }
+
+        if (limit && limit > 0) {
+            messages = messages.slice(0, limit);
+        }
+
+        return messages;
+    }
+
+    /**
+     * Get a specific message by ID
+     * @param {string} sessionId - The session ID
+     * @param {string} messageId - The message ID
+     * @returns {Object|null} The message or null if not found
+     */
+    getMessage(sessionId, messageId) {
+        if (!sessionId || !messageId) {
+            return null;
+        }
+
+        const messages = this.messages.get(sessionId) || [];
+        return messages.find(msg => msg.id === messageId) || null;
+    }
+
+    /**
+     * Update a message
+     * @param {string} sessionId - The session ID
+     * @param {string} messageId - The message ID
+     * @param {Object} updates - Fields to update
+     * @returns {Promise<Object|null>} The updated message or null if not found
+     */
+    async updateMessage(sessionId, messageId, updates) {
+        if (!sessionId || !messageId) {
+            throw new Error('ChatManager: Session ID and Message ID are required');
+        }
+
+        const messages = this.messages.get(sessionId);
+        if (!messages) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        const messageIndex = messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex === -1) {
+            throw new Error(`ChatManager: Message '${messageId}' not found in session '${sessionId}'`);
+        }
+
+        const originalMessage = messages[messageIndex];
+        const updatedMessage = {
+            ...originalMessage,
+            ...updates,
+            metadata: {
+                ...originalMessage.metadata,
+                ...(updates.metadata || {})
+            },
+            updatedAt: Date.now()
+        };
+
+        // Validate content length if being updated
+        if (updates.content && updates.content.length > this.maxMessageLength) {
+            throw new Error(`ChatManager: Message content exceeds maximum length of ${this.maxMessageLength} characters`);
+        }
+
+        messages[messageIndex] = updatedMessage;
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatMessages.${sessionId}`, messages);
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:message:updated', {
+                sessionId,
+                message: updatedMessage,
+                originalMessage
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Updated message '${messageId}' in session '${sessionId}'`);
+        }
+
+        return updatedMessage;
+    }
+
+    /**
+     * Delete a message
+     * @param {string} sessionId - The session ID
+     * @param {string} messageId - The message ID
+     * @returns {Promise<boolean>} Success status
+     */
+    async deleteMessage(sessionId, messageId) {
+        if (!sessionId || !messageId) {
+            throw new Error('ChatManager: Session ID and Message ID are required');
+        }
+
+        const messages = this.messages.get(sessionId);
+        if (!messages) {
+            throw new Error(`ChatManager: Session '${sessionId}' not found`);
+        }
+
+        const messageIndex = messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex === -1) {
+            throw new Error(`ChatManager: Message '${messageId}' not found in session '${sessionId}'`);
+        }
+
+        const deletedMessage = messages[messageIndex];
+        messages.splice(messageIndex, 1);
+
+        // Update session metadata
+        const session = this.sessions.get(sessionId);
+        session.messageCount = messages.length;
+        session.updatedAt = Date.now();
+        this.sessions.set(sessionId, session);
+
+        // Update state manager
+        if (this.stateManager) {
+            this.stateManager.setState(`chatSessions.${sessionId}`, session);
+            this.stateManager.setState(`chatMessages.${sessionId}`, messages);
+        }
+
+        // Emit event
+        if (this.eventBus) {
+            await this.eventBus.emit('chat:message:deleted', {
+                sessionId,
+                message: deletedMessage,
+                session,
+                totalMessages: messages.length
+            });
+        }
+
+        if (this.debugMode) {
+            console.log(`ChatManager: Deleted message '${messageId}' from session '${sessionId}'`);
+        }
+
+        return true;
+    }
+
+    /**
+     * Format a message for display
+     * @param {Object} message - The message object
+     * @param {Object} options - Formatting options
+     * @param {boolean} options.includeTimestamp - Whether to include timestamp
+     * @param {boolean} options.includeMetadata - Whether to include metadata
+     * @param {string} options.dateFormat - Date format string
+     * @returns {Object} Formatted message object
+     */
+    formatMessage(message, options = {}) {
+        const { includeTimestamp = true, includeMetadata = false, dateFormat = 'ISO' } = options;
+
+        const formatted = {
+            id: message.id,
+            senderId: message.senderId,
+            content: message.content,
+            role: message.role,
+            isFormatted: message.isFormatted,
+            avatar: message.avatar
+        };
+
+        if (includeTimestamp) {
+            if (dateFormat === 'ISO') {
+                formatted.timestamp = new Date(message.timestamp).toISOString();
+            } else if (dateFormat === 'relative') {
+                formatted.timestamp = this.getRelativeTime(message.timestamp);
+            } else {
+                formatted.timestamp = new Date(message.timestamp).toLocaleString();
+            }
+        }
+
+        if (includeMetadata) {
+            formatted.metadata = message.metadata;
+        }
+
+        return formatted;
+    }
+
+    /**
+     * Get relative time string
+     * @param {number} timestamp - The timestamp
+     * @returns {string} Relative time string
+     */
+    getRelativeTime(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const seconds = Math.floor(diff / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (days > 0) {
+            return `${days} day${days > 1 ? 's' : ''} ago`;
+        } else if (hours > 0) {
+            return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+        } else if (minutes > 0) {
+            return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+        } else if (seconds > 0) {
+            return `${seconds} second${seconds > 1 ? 's' : ''} ago`;
+        } else {
+            return 'just now';
+        }
+    }
+
+    /**
+     * Get message statistics for a session
+     * @param {string} sessionId - The session ID
+     * @returns {Object|null} Message statistics or null if session not found
+     */
+    getMessageStats(sessionId) {
+        if (!sessionId || !this.sessions.has(sessionId)) {
+            return null;
+        }
+
+        const messages = this.messages.get(sessionId) || [];
+        const participants = this.participants.get(sessionId) || new Set();
+
+        // Count messages by sender
+        const senderCounts = {};
+        const roleCounts = {};
+        let totalLength = 0;
+
+        messages.forEach(msg => {
+            senderCounts[msg.senderId] = (senderCounts[msg.senderId] || 0) + 1;
+            roleCounts[msg.role] = (roleCounts[msg.role] || 0) + 1;
+            totalLength += msg.content.length;
+        });
+
+        return {
+            sessionId,
+            totalMessages: messages.length,
+            uniqueSenders: Object.keys(senderCounts).length,
+            totalParticipants: participants.size,
+            averageMessageLength: messages.length > 0 ? Math.round(totalLength / messages.length) : 0,
+            senderBreakdown: senderCounts,
+            roleBreakdown: roleCounts,
+            firstMessageTime: messages.length > 0 ? messages[0].timestamp : null,
+            lastMessageTime: messages.length > 0 ? messages[messages.length - 1].timestamp : null
         };
     }
 
@@ -616,6 +1027,7 @@ class ChatManager {
         this.sessions.clear();
         this.participants.clear();
         this.sessionMetadata.clear();
+        this.messages.clear();
         
         if (this.debugMode) {
             console.log('ChatManager: Destroyed');

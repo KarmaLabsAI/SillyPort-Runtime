@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Bundle Test</title>
+</head>
+<body>
+    <h1>Browser Bundle Test</h1>
+    <div id="results"></div>
+
+    <script src="dist/sillyport-runtime.browser.js"></script>
+    <script>
+        function log(message) {
+            const div = document.createElement('div');
+            div.textContent = message;
+            document.getElementById('results').appendChild(div);
+            console.log(message);
+        }
+
+        // Test if all classes are available
+        log('Testing browser bundle...');
+
+        try {
+            // Test EventBus
+            const eventBus = new EventBus();
+            log('✓ EventBus created successfully');
+            
+            // Test StateManager
+            const stateManager = new StateManager();
+            log('✓ StateManager created successfully');
+            
+            // Test ConfigManager
+            const configManager = new ConfigManager();
+            log('✓ ConfigManager created successfully');
+            
+            // Test StorageManager
+            const storageManager = new StorageManager();
+            log('✓ StorageManager created successfully');
+            
+            // Test ChatManager
+            const chatManager = new ChatManager();
+            log('✓ ChatManager created successfully');
+            
+            // Test SillyTavernRuntime
+            const runtime = new SillyTavernRuntime();
+            log('✓ SillyTavernRuntime created successfully');
+            
+            // Test namespace access
+            const struntime = new window.STRuntime.SillyTavernRuntime();
+            log('✓ STRuntime namespace works');
+            
+            log('🎉 All classes are available and working!');
+            
+        } catch (error) {
+            log('❌ Error: ' + error.message);
+            console.error(error);
+        }
+    </script>
+</body>
+</html> 

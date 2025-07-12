@@ -75,15 +75,43 @@ The EventBus system has been fully implemented and tested with:
 ### Running Tests
 
 ```bash
-# Run all tests
-npx jest
+# Run Node.js tests (Jest)
+npm test                    # Run all Node.js tests
+npm run test:node          # Run only Node.js-safe tests
+npm run test:watch         # Run tests in watch mode
 
-# Run EventBus tests specifically
-npx jest tests/EventBus.test.js
-
-# Run tests in browser
-open test.html
+# Run browser tests
+# Open browser-tests.html in your browser
+# Or use the test server:
+python3 -m http.server 8000
+# Then visit http://localhost:8000/browser-tests.html
 ```
+
+### Test Organization
+
+The project uses a compartmentalized testing approach:
+
+- **Node.js Tests** (`tests/node/`): Run with Jest, use mocks for browser APIs
+- **Browser Tests** (`tests/browser/`): Require real browser APIs (IndexedDB, localStorage)
+- **Browser Bundle** (`dist/sillyport-runtime.browser.js`): All classes exposed globally for browser testing
+
+### Browser Testing
+
+For tests that require real browser APIs:
+
+1. **Start the test server:**
+   ```bash
+   python3 -m http.server 8000
+   ```
+
+2. **Open browser tests:**
+   - Visit `http://localhost:8000/browser-tests.html`
+   - Or use `http://localhost:8000/test-browser-bundle.html` for quick verification
+
+3. **Available test suites:**
+   - StorageManager (IndexedDB integration)
+   - SillyTavernRuntime (full integration)
+   - ChatManager (with storage)
 
 ### Manual Console Testing
 

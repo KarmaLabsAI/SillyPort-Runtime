@@ -32,7 +32,7 @@ class ConfigManager {
      */
     detectEnvironment() {
         // Detect environment based on various indicators
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && window.location && window.location.hostname) {
             if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
                 return 'development';
             } else if (window.location.hostname.includes('staging') || window.location.hostname.includes('test')) {
@@ -41,7 +41,7 @@ class ConfigManager {
                 return 'production';
             }
         }
-        return 'unknown';
+        return 'development'; // Default to development in Node.js environment
     }
 
     /**

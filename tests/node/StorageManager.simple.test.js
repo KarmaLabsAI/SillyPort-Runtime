@@ -5,7 +5,7 @@
  * Focuses on core functionality without complex IndexedDB mocking
  */
 
-const { StorageManager } = require('../../src/core/StorageManager');
+const StorageManager = require('../../src/core/StorageManager');
 
 // Mock EventBus for testing
 class MockEventBus {
