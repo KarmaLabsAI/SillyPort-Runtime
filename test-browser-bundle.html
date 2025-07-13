@@ -8,6 +8,11 @@
 <body>
     <h1>Browser Bundle Test</h1>
     <div id="results"></div>
+    <div class="test-section">
+        <h2>STRuntime Console API Tests</h2>
+        <button onclick="runSTRuntimeConsoleTests()">Run STRuntime Console API Tests</button>
+        <div id="struntime-console-results"></div>
+    </div>
 
     <script src="dist/sillyport-runtime.browser.js"></script>
     <script>
@@ -57,5 +62,81 @@
             console.error(error);
         }
     </script>
+    <script>
+function runSTRuntimeConsoleTests() {
+    const resultsDiv = document.getElementById('struntime-console-results');
+    resultsDiv.innerHTML = '';
+    let passed = 0, failed = 0;
+    function logResult(pass, msg) {
+        const div = document.createElement('div');
+        div.className = 'test-result ' + (pass ? 'pass' : 'fail');
+        div.textContent = (pass ? '✅ ' : '❌ ') + msg;
+        resultsDiv.appendChild(div);
+        if (pass) passed++; else failed++;
+    }
+    try {
+        // 1. STRuntime exists
+        if (typeof window.STRuntime === 'object') {
+            logResult(true, 'window.STRuntime is present');
+        } else {
+            logResult(false, 'window.STRuntime is missing');
+        }
+        // 2. Required helpers
+        const helpers = [
+            'init',
+            'loadCharacterFromURL',
+            'loadPresetsFromURL',
+            'createTestChat',
+            'getStats',
+            'setDebugMode',
+            'destroy',
+            'getRuntime'
+        ];
+        for (const fn of helpers) {
+            if (typeof window.STRuntime?.[fn] === 'function') {
+                logResult(true, `STRuntime.${fn} is a function`);
+            } else {
+                logResult(false, `STRuntime.${fn} is missing or not a function`);
+            }
+        }
+        // 3. Try calling getStats (should return error if not initialized)
+        try {
+            const stats = window.STRuntime.getStats();
+            if (stats && stats.error && stats.error.includes('not initialized')) {
+                logResult(true, 'STRuntime.getStats() returns error when not initialized');
+            } else {
+                logResult(false, 'STRuntime.getStats() did not return expected error');
+            }
+        } catch (e) {
+            logResult(false, 'STRuntime.getStats() threw an error: ' + e);
+        }
+        // 4. Try calling setDebugMode (should not throw)
+        try {
+            window.STRuntime.setDebugMode(true);
+            logResult(true, 'STRuntime.setDebugMode(true) did not throw');
+        } catch (e) {
+            logResult(false, 'STRuntime.setDebugMode(true) threw: ' + e);
+        }
+        // 5. Try calling getRuntime (should be null if not initialized)
+        try {
+            const runtime = window.STRuntime.getRuntime();
+            if (runtime === null) {
+                logResult(true, 'STRuntime.getRuntime() returns null when not initialized');
+            } else {
+                logResult(false, 'STRuntime.getRuntime() did not return null');
+            }
+        } catch (e) {
+            logResult(false, 'STRuntime.getRuntime() threw: ' + e);
+        }
+    } catch (err) {
+        logResult(false, 'Unexpected error: ' + err);
+    }
+    // Summary
+    const summary = document.createElement('div');
+    summary.className = 'test-result ' + (failed === 0 ? 'pass' : 'fail');
+    summary.textContent = `Summary: ${passed} passed, ${failed} failed.`;
+    resultsDiv.appendChild(summary);
+}
+</script>
 </body>
 </html> 
