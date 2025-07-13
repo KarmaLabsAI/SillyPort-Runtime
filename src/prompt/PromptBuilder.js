@@ -63,7 +63,22 @@ class PromptBuilder {
                         messageCount: Array.isArray(messages) ? messages.length : 0
                     });
                 }
-                throw new Error('Invalid character data');
+                // Return a default result instead of throwing
+                return {
+                    content: '',
+                    metadata: {
+                        characterId: 'unknown',
+                        messageCount: Array.isArray(messages) ? messages.length : 0,
+                        contextPreset: 'default',
+                        totalLength: 0,
+                        componentLengths: {},
+                        buildTime: Date.now() - startTime,
+                        cacheHit: false,
+                        timestamp: Date.now()
+                    },
+                    components: {},
+                    config: this.mergeConfig(options)
+                };
             }
             // Merge options with defaults
             const config = this.mergeConfig(options);
@@ -510,43 +525,88 @@ class PromptBuilder {
     }
 
     /**
-     * Apply template with variables
+     * Validate a template for syntax errors, unknown variables, and unclosed tags
+     * @param {string} template - Template string
+     * @param {Object} variables - Allowed variables
+     * @param {Object} customFunctions - Allowed custom functions (optional)
+     * @returns {Object} { valid: boolean, errors: string[] }
+     */
+    validateTemplate(template, variables = {}, customFunctions = {}) {
+        const errors = [];
+        // Check for unclosed conditionals
+        const openIfs = [...template.matchAll(/\{\{#if\s+\w+\}\}/g)];
+        const closeIfs = [...template.matchAll(/\{\{\/if\}\}/g)];
+        if (openIfs.length !== closeIfs.length) {
+            errors.push('Mismatched {{#if}} and {{/if}} tags');
+        }
+        // Check for unknown variables
+        const varMatches = [...template.matchAll(/\{\{([a-zA-Z0-9_]+)\}\}/g)];
+        for (const match of varMatches) {
+            const varName = match[1];
+            if (!(varName in variables)) {
+                errors.push(`Unknown variable: {{${varName}}}`);
+            }
+        }
+        // Check for unknown custom functions (e.g., {{#customFunc ...}})
+        const funcMatches = [...template.matchAll(/\{\{#([a-zA-Z0-9_]+)(?:\s+[^}]*)?\}\}/g)];
+        for (const match of funcMatches) {
+            const funcName = match[1];
+            if (funcName !== 'if' && !(funcName in customFunctions)) {
+                errors.push(`Unknown custom function: {{#${funcName}}}`);
+            }
+        }
+        return { valid: errors.length === 0, errors };
+    }
+
+    /**
+     * Apply template with variables and custom functions
      * @param {string} template - Template string
      * @param {Object} variables - Template variables
+     * @param {Object} customFunctions - Custom template functions (optional)
      * @returns {string} Processed template
      */
-    applyTemplate(template, variables) {
+    applyTemplate(template, variables, customFunctions = {}) {
         let result = template;
-        
         // Replace variables
         Object.entries(variables).forEach(([key, value]) => {
             const placeholder = `{{${key}}}`;
             result = result.replace(new RegExp(placeholder, 'g'), value || '');
         });
-        
-        // Handle conditionals
-        result = this.processConditionals(result, variables);
-        
+        // Handle conditionals and custom functions
+        result = this.processConditionals(result, variables, customFunctions);
         return result;
     }
 
     /**
-     * Process conditional statements in template
+     * Process conditional statements and custom functions in template
      * @param {string} template - Template string
      * @param {Object} variables - Template variables
+     * @param {Object} customFunctions - Custom template functions (optional)
      * @returns {string} Processed template
      */
-    processConditionals(template, variables) {
+    processConditionals(template, variables, customFunctions = {}) {
         // Handle {{#if variable}}content{{/if}} pattern
         const conditionalRegex = /\{\{#if\s+(\w+)\}\}(.*?)\{\{\/if\}\}/gs;
-        
-        return template.replace(conditionalRegex, (match, variable, content) => {
+        template = template.replace(conditionalRegex, (match, variable, content) => {
             const value = variables[variable];
             if (value && value.trim() !== '') {
                 return content;
             }
             return '';
         });
+        // Handle custom functions: {{#funcName arg1 arg2}}content{{/funcName}}
+        const customFuncRegex = /\{\{#([a-zA-Z0-9_]+)(?:\s+([^}]*))?\}\}([\s\S]*?)\{\{\/\1\}\}/g;
+        template = template.replace(customFuncRegex, (match, funcName, args, content) => {
+            if (funcName === 'if') return match; // Already handled
+            if (customFunctions && typeof customFunctions[funcName] === 'function') {
+                // Parse args (split by whitespace, ignore empty)
+                const argList = args ? args.trim().split(/\s+/) : [];
+                return customFunctions[funcName](content, ...argList, variables);
+            }
+            // Unknown function: leave as is or remove
+            return '';
+        });
+        return template;
     }
 
     /**

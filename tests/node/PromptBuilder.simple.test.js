@@ -576,4 +576,60 @@ describe('PromptBuilder - Task 4.1.1: Context Assembly', () => {
             expect(unknownName).toBe('unknown');
         });
     });
+
+    describe('Template Validation and Custom Functions', () => {
+        test('should detect unclosed if tags', () => {
+            const template = '{{#if description}}desc';
+            const variables = { description: 'desc' };
+            const result = promptBuilder.validateTemplate(template, variables);
+            expect(result.valid).toBe(false);
+            expect(result.errors).toContain('Mismatched {{#if}} and {{/if}} tags');
+        });
+        test('should detect unknown variables', () => {
+            const template = '{{description}} {{unknown}}';
+            const variables = { description: 'desc' };
+            const result = promptBuilder.validateTemplate(template, variables);
+            expect(result.valid).toBe(false);
+            expect(result.errors).toContain('Unknown variable: {{unknown}}');
+        });
+        test('should detect unknown custom functions', () => {
+            const template = '{{#customFunc}}content{{/customFunc}}';
+            const variables = {};
+            const result = promptBuilder.validateTemplate(template, variables);
+            expect(result.valid).toBe(false);
+            expect(result.errors).toContain('Unknown custom function: {{#customFunc}}');
+        });
+        test('should allow known custom functions', () => {
+            const template = '{{#myFunc arg1}}content{{/myFunc}}';
+            const variables = {};
+            const customFunctions = { myFunc: () => '' };
+            const result = promptBuilder.validateTemplate(template, variables, customFunctions);
+            expect(result.valid).toBe(true);
+        });
+        test('should process custom template functions', () => {
+            const template = '{{#shout}}hello{{/shout}}';
+            const variables = {};
+            const customFunctions = {
+                shout: (content) => content.toUpperCase() + '!'
+            };
+            const output = promptBuilder.applyTemplate(template, variables, customFunctions);
+            expect(output).toBe('HELLO!');
+        });
+        test('should pass arguments to custom template functions', () => {
+            const template = '{{#repeat 3}}hi {{/repeat}}';
+            const variables = {};
+            const customFunctions = {
+                repeat: (content, times) => content.repeat(Number(times)).trim()
+            };
+            const output = promptBuilder.applyTemplate(template, variables, customFunctions);
+            expect(output).toBe('hi hi hi');
+        });
+        test('should handle multiple errors in template validation', () => {
+            const template = '{{#if description}}desc{{#customFunc}}x';
+            const variables = {};
+            const result = promptBuilder.validateTemplate(template, variables);
+            expect(result.valid).toBe(false);
+            expect(result.errors.length).toBeGreaterThan(1);
+        });
+    });
 }); 
