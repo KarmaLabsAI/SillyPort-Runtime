@@ -7,9 +7,11 @@
 const PromptBuilder = require('./PromptBuilder.js');
 const OpenAIConverter = require('./OpenAIConverter.js');
 const AnthropicConverter = require('./AnthropicConverter.js');
+const GoogleConverter = require('./GoogleConverter.js');
 
 module.exports = {
     PromptBuilder,
     OpenAIConverter,
-    AnthropicConverter
+    AnthropicConverter,
+    GoogleConverter
 }; 

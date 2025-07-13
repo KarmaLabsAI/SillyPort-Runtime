@@ -10,6 +10,7 @@ const StateManager = require('./core/StateManager');
 const ConfigManager = require('./core/ConfigManager');
 const StorageManager = require('./core/StorageManager');
 const SillyTavernRuntime = require('./core/SillyTavernRuntime');
+const MemoryManager = require('./memory/MemoryManager');
 
 // Character components
 const { CharacterCard, PNGMetadataExtractor } = require('./character');
@@ -32,7 +33,8 @@ module.exports = {
     FormatImporter,
     PromptBuilder,
     OpenAIConverter,
-    AnthropicConverter
+    AnthropicConverter,
+    MemoryManager
 };
 
 // For browser environments, also attach to window
@@ -49,6 +51,7 @@ if (typeof window !== 'undefined') {
         FormatImporter,
         PromptBuilder,
         OpenAIConverter,
-        AnthropicConverter
+        AnthropicConverter,
+        MemoryManager
     };
 } 
