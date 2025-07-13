@@ -286,22 +286,23 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
     });
 
     describe('Context Caching', () => {
-        test('should cache context data', () => {
+        test('should cache context data', async () => {
             const key = 'test-key';
             const data = { content: 'test content', metadata: { test: true } };
             const config = { contextCaching: true, cacheCompression: false };
 
-            promptBuilder.cacheContext(key, data, config);
+            await promptBuilder.cacheContext(key, data, config);
             
-            const cached = promptBuilder.getCachedContext(key);
+            const cached = await promptBuilder.getCachedContext(key);
             expect(cached).toEqual(data);
         });
 
-        test('should compress cached data when beneficial', () => {
+        test('should compress cached data when beneficial', async () => {
             const key = 'test-key';
             // Use data that will definitely be compressed (redundant phrases and long words)
+            // Make it large enough to exceed the compression threshold
             const data = { 
-                content: 'This is a very long description with really excellent information about the character personality and scenario details. In my opinion, this contains quite a lot of redundant phrases and so on. I think this will be compressed because it has many words that can be shortened like character, description, personality, information, because, through, though, etc.',
+                content: 'This is a very long description with really excellent information about the character personality and scenario details. In my opinion, this contains quite a lot of redundant phrases and so on. I think this will be compressed because it has many words that can be shortened like character, description, personality, information, because, through, though, etc. ' + 'A'.repeat(200), // Add extra content to exceed threshold
                 metadata: { test: true } 
             };
             const config = { 
@@ -310,9 +311,10 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
                 compressionThreshold: 500 // Lower threshold to ensure compression
             };
 
-            promptBuilder.cacheContext(key, data, config);
+            await promptBuilder.cacheContext(key, data, config);
             
-            const cached = promptBuilder.getCachedContext(key);
+            const cached = await promptBuilder.getCachedContext(key);
+            // The cached data should match the original data (decompression should work)
             expect(cached).toEqual(data);
             
             // Check that compression was applied (data contains compressible content)
@@ -320,12 +322,12 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
             expect(cacheStats.compressions).toBeGreaterThan(0);
         });
 
-        test('should return null for non-existent cache key', () => {
-            const cached = promptBuilder.getCachedContext('non-existent');
+        test('should return null for non-existent cache key', async () => {
+            const cached = await promptBuilder.getCachedContext('non-existent');
             expect(cached).toBeNull();
         });
 
-        test('should track cache statistics', () => {
+        test('should track cache statistics', async () => {
             const key = 'test-key';
             const data = { content: 'test content' };
             const config = { contextCaching: true };
@@ -335,20 +337,20 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
             expect(promptBuilder.cacheStats.misses).toBe(0);
 
             // Cache miss
-            const cached1 = promptBuilder.getCachedContext(key);
+            const cached1 = await promptBuilder.getCachedContext(key);
             expect(cached1).toBeNull();
             expect(promptBuilder.cacheStats.misses).toBe(1);
 
             // Cache data
-            promptBuilder.cacheContext(key, data, config);
+            await promptBuilder.cacheContext(key, data, config);
 
             // Cache hit
-            const cached2 = promptBuilder.getCachedContext(key);
+            const cached2 = await promptBuilder.getCachedContext(key);
             expect(cached2).toEqual(data);
             expect(promptBuilder.cacheStats.hits).toBe(1);
         });
 
-        test('should enforce cache size limits', () => {
+        test('should enforce cache size limits', async () => {
             const config = { contextCaching: true, cacheCompression: false };
             
             // Set small cache size
@@ -357,7 +359,7 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
             // Add multiple large entries
             for (let i = 0; i < 10; i++) {
                 const data = { content: 'A'.repeat(500) };
-                promptBuilder.cacheContext(`key-${i}`, data, config);
+                await promptBuilder.cacheContext(`key-${i}`, data, config);
             }
 
             // Check that cache size is enforced
@@ -365,16 +367,16 @@ describe('PromptBuilder - Task 4.1.3: Context Optimization', () => {
             expect(totalSize).toBeLessThanOrEqual(1000);
         });
 
-        test('should clear context cache', () => {
+        test('should clear context cache', async () => {
             const key = 'test-key';
             const data = { content: 'test content' };
             const config = { contextCaching: true };
 
-            promptBuilder.cacheContext(key, data, config);
-            expect(promptBuilder.getCachedContext(key)).toEqual(data);
+            await promptBuilder.cacheContext(key, data, config);
+            expect(await promptBuilder.getCachedContext(key)).toEqual(data);
 
             promptBuilder.clearContextCache();
-            expect(promptBuilder.getCachedContext(key)).toBeNull();
+            expect(await promptBuilder.getCachedContext(key)).toBeNull();
             expect(promptBuilder.cacheStats.hits).toBe(0);
             expect(promptBuilder.cacheStats.misses).toBe(1); // One miss from the getCachedContext call after clear
             expect(promptBuilder.cacheStats.compressions).toBe(0);

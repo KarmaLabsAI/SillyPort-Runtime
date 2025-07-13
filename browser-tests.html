@@ -198,6 +198,22 @@
     <!-- Load the browser-compatible bundle -->
     <script src="dist/sillyport-runtime.browser.js"></script>
     
+    <script type="module">
+        import { runCompressorTests } from './tests/browser/Compressor.test.js';
+        
+        // Make Compressor available globally for console testing
+        window.Compressor = {
+            compress: async (data) => {
+                const { compress } = await import('./src/utils/Compressor.js');
+                return await compress(data);
+            },
+            decompress: async (compressedData) => {
+                const { decompress } = await import('./src/utils/Compressor.js');
+                return await decompress(compressedData);
+            }
+        };
+    </script>
+
     <script>
         // Global test state
         let testResults = {
@@ -537,13 +553,15 @@
             await runStorageTests();
             await runRuntimeTests();
             await runChatTests();
+            await runCompressorTests();
         }
 
         // Initialize on page load
-        window.addEventListener('load', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
             console.log('SillyTavern Runtime - Browser Tests Page Loaded');
             console.log('Run tests using the buttons above');
             updateSummary();
+            await runCompressorTests();
         });
     </script>
 </body>

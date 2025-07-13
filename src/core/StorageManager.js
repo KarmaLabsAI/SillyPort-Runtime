@@ -5,6 +5,8 @@
  * ensuring data persistence across browser sessions while maintaining performance
  * and reliability.
  */
+const { compress, decompress } = require('../utils/Compressor.js');
+
 class StorageManager {
     constructor(eventBus = null) {
         this.eventBus = eventBus;
@@ -787,80 +789,21 @@ class StorageManager {
     }
 
     /**
-     * Compress data using browser's built-in compression
+     * Compress data using Compressor utility
      * @param {string} data - Data to compress
      * @returns {Promise<string>} Compressed data as base64
      */
     async compressData(data) {
-        if (typeof CompressionStream !== 'undefined') {
-            // Use modern CompressionStream API
-            const stream = new CompressionStream('gzip');
-            const writer = stream.writable.getWriter();
-            const reader = stream.readable.getReader();
-            
-            const encoder = new TextEncoder();
-            const dataBuffer = encoder.encode(data);
-            
-            await writer.write(dataBuffer);
-            await writer.close();
-            
-            const chunks = [];
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-            }
-            
-            const compressedBuffer = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-            let offset = 0;
-            for (const chunk of chunks) {
-                compressedBuffer.set(chunk, offset);
-                offset += chunk.length;
-            }
-            
-            return btoa(String.fromCharCode(...compressedBuffer));
-        } else {
-            // Fallback: simple compression for older browsers
-            return btoa(unescape(encodeURIComponent(data)));
-        }
+        return await compress(data);
     }
 
     /**
-     * Decompress data using browser's built-in decompression
+     * Decompress data using Compressor utility
      * @param {string} compressedData - Compressed data as base64
      * @returns {Promise<string>} Decompressed data
      */
     async decompressData(compressedData) {
-        if (typeof DecompressionStream !== 'undefined') {
-            // Use modern DecompressionStream API
-            const stream = new DecompressionStream('gzip');
-            const writer = stream.writable.getWriter();
-            const reader = stream.readable.getReader();
-            
-            const compressedBuffer = new Uint8Array(atob(compressedData).split('').map(c => c.charCodeAt(0)));
-            
-            await writer.write(compressedBuffer);
-            await writer.close();
-            
-            const chunks = [];
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-            }
-            
-            const decompressedBuffer = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-            let offset = 0;
-            for (const chunk of chunks) {
-                decompressedBuffer.set(chunk, offset);
-                offset += chunk.length;
-            }
-            
-            return new TextDecoder().decode(decompressedBuffer);
-        } else {
-            // Fallback: simple decompression for older browsers
-            return decodeURIComponent(escape(atob(compressedData)));
-        }
+        return await decompress(compressedData);
     }
 
     /**

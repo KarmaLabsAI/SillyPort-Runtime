@@ -405,7 +405,7 @@ class PromptBuilder {
      * @param {Object} data - Data to cache
      * @param {Object} config - Configuration
      */
-    cacheContext(key, data, config) {
+    async cacheContext(key, data, config) {
         if (!config.contextCaching) return;
 
         const dataString = JSON.stringify(data);
@@ -414,23 +414,34 @@ class PromptBuilder {
         // Check if compression is beneficial
         const compressionThreshold = config.compressionThreshold || this.defaultConfig.compressionThreshold;
         if (config.cacheCompression && dataSize > compressionThreshold) {
-            const compressed = this.compressText(dataString, {
-                removeWhitespace: true,
-                removeRedundancy: true,
-                shortenWords: true
-            });
-
-            if (compressed.compressed) {
-                this.compressedCache.set(key, {
-                    data: compressed.text,
-                    compressed: true,
-                    originalSize: dataSize,
-                    compressedSize: compressed.compressedSize,
-                    timestamp: Date.now()
-                });
-                this.cacheStats.compressions++;
-                this.cacheStats.compressedSize += compressed.compressedSize;
-            } else {
+            // For JSON data, we should not apply text-based compression as it modifies the content
+            // Instead, we'll use the new Compressor utility for proper data compression
+            try {
+                const { compress } = require('../utils/Compressor.js');
+                const compressedData = await compress(dataString);
+                const compressedSize = new Blob([compressedData]).size;
+                
+                if (compressedSize < dataSize) {
+                    this.compressedCache.set(key, {
+                        data: compressedData,
+                        compressed: true,
+                        originalSize: dataSize,
+                        compressedSize: compressedSize,
+                        timestamp: Date.now()
+                    });
+                    this.cacheStats.compressions++;
+                    this.cacheStats.compressedSize += compressedSize;
+                } else {
+                    this.contextCache.set(key, {
+                        data: dataString,
+                        compressed: false,
+                        originalSize: dataSize,
+                        compressedSize: dataSize,
+                        timestamp: Date.now()
+                    });
+                }
+            } catch (error) {
+                // Fallback to uncompressed storage if compression fails
                 this.contextCache.set(key, {
                     data: dataString,
                     compressed: false,
@@ -456,14 +467,22 @@ class PromptBuilder {
     /**
      * Retrieve context from cache
      * @param {string} key - Cache key
-     * @returns {Object|null} Cached data or null
+     * @returns {Promise<Object|null>} Cached data or null
      */
-    getCachedContext(key) {
+    async getCachedContext(key) {
         // Check compressed cache first
         if (this.compressedCache.has(key)) {
             this.cacheStats.hits++;
             const cached = this.compressedCache.get(key);
-            return JSON.parse(cached.data);
+            try {
+                const { decompress } = require('../utils/Compressor.js');
+                const decompressedData = await decompress(cached.data);
+                return JSON.parse(decompressedData);
+            } catch (error) {
+                // Fallback to uncompressed data if decompression fails
+                console.warn('Decompression failed, using fallback:', error.message);
+                return null;
+            }
         }
 
         // Check regular cache
@@ -564,7 +583,7 @@ class PromptBuilder {
             
             // Check context cache first (Task 4.1.3)
             if (config.contextCaching) {
-                const cachedContext = this.getCachedContext(cacheKey);
+                const cachedContext = await this.getCachedContext(cacheKey);
                 if (cachedContext) {
                     this.stats.cacheHits++;
                     this.stats.promptsBuilt++;
@@ -679,9 +698,7 @@ class PromptBuilder {
                     characterId: character?.id || character?.data?.name || 'unknown',
                     messageCount: messages.length,
                     promptLength: promptLength,
-                    buildTime: result.metadata.buildTime,
-                    tokenCount: tokenCount,
-                    optimizationApplied: optimizationStats.optimizationApplied || false
+                    buildTime: result.metadata.buildTime
                 });
             }
             

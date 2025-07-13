@@ -12,6 +12,9 @@ const StorageManager = require('./core/StorageManager');
 const SillyTavernRuntime = require('./core/SillyTavernRuntime');
 const MemoryManager = require('./memory/MemoryManager');
 
+// Utility components
+const { compress, decompress } = require('./utils/Compressor');
+
 // Character components
 const { CharacterCard, PNGMetadataExtractor } = require('./character');
 
@@ -34,7 +37,9 @@ module.exports = {
     PromptBuilder,
     OpenAIConverter,
     AnthropicConverter,
-    MemoryManager
+    MemoryManager,
+    compress,
+    decompress
 };
 
 // For browser environments, also attach to window
@@ -52,6 +57,8 @@ if (typeof window !== 'undefined') {
         PromptBuilder,
         OpenAIConverter,
         AnthropicConverter,
-        MemoryManager
+        MemoryManager,
+        compress,
+        decompress
     };
 } 
