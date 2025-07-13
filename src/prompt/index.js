@@ -5,7 +5,9 @@
  */
 
 const PromptBuilder = require('./PromptBuilder.js');
+const OpenAIConverter = require('./OpenAIConverter.js');
 
 module.exports = {
-    PromptBuilder
+    PromptBuilder,
+    OpenAIConverter
 }; 
