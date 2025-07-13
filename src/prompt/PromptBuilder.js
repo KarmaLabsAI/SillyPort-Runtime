@@ -5,6 +5,7 @@
  * Provides context assembly, history formatting, and system prompt construction.
  * 
  * Task 4.1.1: Context Assembly
+ * Task 4.1.3: Context Optimization
  */
 
 class PromptBuilder {
@@ -22,7 +23,27 @@ class PromptBuilder {
             trimSentences: false,
             singleLine: false,
             useStopStrings: false,
-            alwaysForceName2: true
+            alwaysForceName2: true,
+            
+            // Task 4.1.3: Context Optimization
+            tokenCountingEnabled: true,
+            tokenEstimationMethod: 'character', // 'character', 'word', 'gpt2'
+            compressionEnabled: true,
+            compressionThreshold: 1000,
+            smartTruncation: true,
+            contentPrioritization: true,
+            contextCaching: true,
+            cacheCompression: true,
+            maxCacheSize: 50 * 1024 * 1024, // 50MB
+            tokenLimit: 4096,
+            truncationStrategy: 'smart', // 'smart', 'end', 'start', 'middle'
+            priorityWeights: {
+                system: 1.0,
+                worldInfo: 0.9,
+                character: 0.8,
+                history: 0.7,
+                user: 0.6
+            }
         };
         
         // Cache for processed prompts
@@ -30,16 +51,468 @@ class PromptBuilder {
         this.cacheEnabled = true;
         this.cacheSize = 100;
         
+        // Task 4.1.3: Enhanced context caching
+        this.contextCache = new Map();
+        this.compressedCache = new Map();
+        this.cacheStats = {
+            hits: 0,
+            misses: 0,
+            compressions: 0,
+            totalSize: 0,
+            compressedSize: 0
+        };
+        
         // Statistics tracking
         this.stats = {
             promptsBuilt: 0,
             cacheHits: 0,
             cacheMisses: 0,
             averageLength: 0,
-            totalLength: 0
+            totalLength: 0,
+            tokenCounts: [],
+            compressionRatios: [],
+            truncationCount: 0
         };
         
         this.debugMode = false;
+        
+        // Token counting utilities
+        this.tokenCounters = {
+            character: this.estimateTokensByCharacter.bind(this),
+            word: this.estimateTokensByWord.bind(this),
+            gpt2: this.estimateTokensGPT2.bind(this)
+        };
+    }
+
+    /**
+     * Estimate tokens by character count (rough approximation)
+     * @param {string} text - Text to count tokens
+     * @returns {number} Estimated token count
+     */
+    estimateTokensByCharacter(text) {
+        if (!text) return 0;
+        // Rough approximation: 1 token ≈ 4 characters for English text
+        return Math.ceil(text.length / 4);
+    }
+
+    /**
+     * Estimate tokens by word count
+     * @param {string} text - Text to count tokens
+     * @returns {number} Estimated token count
+     */
+    estimateTokensByWord(text) {
+        if (!text) return 0;
+        // Split by whitespace and count words
+        const words = text.trim().split(/\s+/);
+        return words.length;
+    }
+
+    /**
+     * Estimate tokens using GPT-2 tokenizer approximation
+     * @param {string} text - Text to count tokens
+     * @returns {number} Estimated token count
+     */
+    estimateTokensGPT2(text) {
+        if (!text) return 0;
+        
+        // GPT-2 tokenizer approximation
+        // Split by common delimiters and count
+        const tokens = text
+            .toLowerCase()
+            .replace(/[^\w\s]/g, ' $& ')
+            .split(/\s+/)
+            .filter(token => token.length > 0);
+        
+        return tokens.length;
+    }
+
+    /**
+     * Count tokens in text using specified method
+     * @param {string} text - Text to count tokens
+     * @param {string} method - Token counting method
+     * @returns {number} Token count
+     */
+    countTokens(text, method = null) {
+        const countingMethod = method || this.defaultConfig.tokenEstimationMethod;
+        const counter = this.tokenCounters[countingMethod];
+        
+        if (!counter) {
+            throw new Error(`Unknown token counting method: ${countingMethod}`);
+        }
+        
+        return counter(text);
+    }
+
+    /**
+     * Smart truncation of text based on priority and token limits
+     * @param {string} text - Text to truncate
+     * @param {number} maxTokens - Maximum tokens allowed
+     * @param {string} strategy - Truncation strategy
+     * @param {number} priority - Content priority (0-1)
+     * @returns {Object} Truncated text and metadata
+     */
+    smartTruncate(text, maxTokens, strategy = 'smart', priority = 0.5) {
+        if (!text || maxTokens <= 0) {
+            return { text: '', truncated: false, tokensRemoved: 0 };
+        }
+
+        const currentTokens = this.countTokens(text);
+        if (currentTokens <= maxTokens) {
+            return { text, truncated: false, tokensRemoved: 0 };
+        }
+
+        const tokensToRemove = currentTokens - maxTokens;
+        let truncatedText = text;
+        let tokensRemoved = 0;
+
+        switch (strategy) {
+            case 'end':
+                // Remove from end
+                truncatedText = this.truncateFromEnd(text, tokensToRemove);
+                break;
+                
+            case 'start':
+                // Remove from start
+                truncatedText = this.truncateFromStart(text, tokensToRemove);
+                break;
+                
+            case 'middle':
+                // Remove from middle
+                truncatedText = this.truncateFromMiddle(text, tokensToRemove);
+                break;
+                
+            case 'smart':
+            default:
+                // Smart truncation based on content structure
+                truncatedText = this.smartTruncateContent(text, tokensToRemove, priority);
+                break;
+        }
+
+        tokensRemoved = currentTokens - this.countTokens(truncatedText);
+        
+        return {
+            text: truncatedText,
+            truncated: true,
+            tokensRemoved,
+            originalTokens: currentTokens,
+            finalTokens: this.countTokens(truncatedText)
+        };
+    }
+
+    /**
+     * Truncate text from the end
+     * @param {string} text - Text to truncate
+     * @param {number} tokensToRemove - Tokens to remove
+     * @returns {string} Truncated text
+     */
+    truncateFromEnd(text, tokensToRemove) {
+        const words = text.split(/\s+/);
+        const tokensPerWord = this.countTokens(text) / words.length;
+        const wordsToRemove = Math.ceil(tokensToRemove / tokensPerWord);
+        
+        return words.slice(0, Math.max(0, words.length - wordsToRemove)).join(' ');
+    }
+
+    /**
+     * Truncate text from the start
+     * @param {string} text - Text to truncate
+     * @param {number} tokensToRemove - Tokens to remove
+     * @returns {string} Truncated text
+     */
+    truncateFromStart(text, tokensToRemove) {
+        const words = text.split(/\s+/);
+        const tokensPerWord = this.countTokens(text) / words.length;
+        const wordsToRemove = Math.ceil(tokensToRemove / tokensPerWord);
+        
+        return words.slice(wordsToRemove).join(' ');
+    }
+
+    /**
+     * Truncate text from the middle
+     * @param {string} text - Text to truncate
+     * @param {number} tokensToRemove - Tokens to remove
+     * @returns {string} Truncated text
+     */
+    truncateFromMiddle(text, tokensToRemove) {
+        const words = text.split(/\s+/);
+        const tokensPerWord = this.countTokens(text) / words.length;
+        const wordsToRemove = Math.ceil(tokensToRemove / tokensPerWord);
+        const halfRemove = Math.floor(wordsToRemove / 2);
+        
+        const firstPart = words.slice(0, Math.floor(words.length / 2) - halfRemove);
+        const secondPart = words.slice(Math.floor(words.length / 2) + halfRemove);
+        
+        return [...firstPart, '...', ...secondPart].join(' ');
+    }
+
+    /**
+     * Smart truncation based on content structure and priority
+     * @param {string} text - Text to truncate
+     * @param {number} tokensToRemove - Tokens to remove
+     * @param {number} priority - Content priority
+     * @returns {string} Truncated text
+     */
+    smartTruncateContent(text, tokensToRemove, priority) {
+        // Split into sentences for better truncation
+        const sentences = text.split(/(?<=[.!?])\s+/);
+        
+        if (sentences.length <= 1) {
+            // Single sentence, use end truncation
+            return this.truncateFromEnd(text, tokensToRemove);
+        }
+
+        // Calculate tokens per sentence
+        const sentenceTokens = sentences.map(s => this.countTokens(s));
+        const totalTokens = sentenceTokens.reduce((sum, tokens) => sum + tokens, 0);
+        
+        // Determine which sentences to keep based on priority
+        const keepRatio = 1 - (tokensToRemove / totalTokens);
+        const sentencesToKeep = Math.max(1, Math.floor(sentences.length * keepRatio));
+        
+        // Keep sentences based on priority position
+        let selectedSentences;
+        if (priority > 0.7) {
+            // High priority: keep from start
+            selectedSentences = sentences.slice(0, sentencesToKeep);
+        } else if (priority < 0.3) {
+            // Low priority: keep from end
+            selectedSentences = sentences.slice(-sentencesToKeep);
+        } else {
+            // Medium priority: keep from both ends
+            const halfKeep = Math.ceil(sentencesToKeep / 2);
+            const firstPart = sentences.slice(0, halfKeep);
+            const secondPart = sentences.slice(-halfKeep);
+            selectedSentences = [...firstPart, ...secondPart];
+        }
+        
+        return selectedSentences.join(' ');
+    }
+
+    /**
+     * Prioritize content based on importance and token limits
+     * @param {Object} components - Prompt components
+     * @param {number} maxTokens - Maximum tokens allowed
+     * @param {Object} config - Configuration
+     * @returns {Object} Prioritized components
+     */
+    prioritizeContent(components, maxTokens, config) {
+        if (!config.contentPrioritization) {
+            return components;
+        }
+
+        const prioritized = {};
+        const weights = config.priorityWeights;
+        let remainingTokens = maxTokens;
+
+        // Sort components by priority
+        const sortedComponents = Object.entries(components)
+            .map(([key, content]) => ({
+                key,
+                content,
+                weight: weights[key] || 0.5,
+                tokens: this.countTokens(content)
+            }))
+            .sort((a, b) => b.weight - a.weight);
+
+        // Allocate tokens based on priority
+        for (const component of sortedComponents) {
+            if (remainingTokens <= 0) {
+                break;
+            }
+
+            const allocatedTokens = Math.floor(remainingTokens * component.weight);
+            const truncationResult = this.smartTruncate(
+                component.content,
+                Math.min(allocatedTokens, component.tokens),
+                config.truncationStrategy,
+                component.weight
+            );
+
+            prioritized[component.key] = truncationResult.text;
+            remainingTokens -= this.countTokens(truncationResult.text);
+        }
+
+        return prioritized;
+    }
+
+    /**
+     * Compress text using simple compression techniques
+     * @param {string} text - Text to compress
+     * @param {Object} options - Compression options
+     * @returns {Object} Compressed text and metadata
+     */
+    compressText(text, options = {}) {
+        if (!text || !this.defaultConfig.compressionEnabled) {
+            return { text, compressed: false, ratio: 1.0 };
+        }
+
+        const originalSize = text.length;
+        let compressedText = text;
+
+        // Remove extra whitespace
+        if (options.removeWhitespace !== false) {
+            compressedText = compressedText.replace(/\s+/g, ' ').trim();
+        }
+
+        // Remove common redundant phrases
+        if (options.removeRedundancy !== false) {
+            const redundancies = [
+                /\b(very|really|quite|extremely)\s+/gi,
+                /\b(and so on|etc\.|and the like)\b/gi,
+                /\b(in my opinion|I think|I believe)\b/gi
+            ];
+            
+            redundancies.forEach(pattern => {
+                compressedText = compressedText.replace(pattern, '');
+            });
+        }
+
+        // Shorten common words
+        if (options.shortenWords !== false) {
+            const wordMap = {
+                'character': 'char',
+                'description': 'desc',
+                'personality': 'persona',
+                'scenario': 'scene',
+                'information': 'info',
+                'because': 'bc',
+                'through': 'thru',
+                'though': 'tho'
+            };
+
+            Object.entries(wordMap).forEach(([long, short]) => {
+                const regex = new RegExp(`\\b${long}\\b`, 'gi');
+                compressedText = compressedText.replace(regex, short);
+            });
+        }
+
+        const compressedSize = compressedText.length;
+        const ratio = originalSize > 0 ? compressedSize / originalSize : 1.0;
+
+        return {
+            text: compressedText,
+            compressed: ratio < 0.95, // Only consider compressed if significant reduction
+            ratio,
+            originalSize,
+            compressedSize,
+            savings: originalSize - compressedSize
+        };
+    }
+
+    /**
+     * Enhanced context caching with compression
+     * @param {string} key - Cache key
+     * @param {Object} data - Data to cache
+     * @param {Object} config - Configuration
+     */
+    cacheContext(key, data, config) {
+        if (!config.contextCaching) return;
+
+        const dataString = JSON.stringify(data);
+        const dataSize = new Blob([dataString]).size;
+
+        // Check if compression is beneficial
+        const compressionThreshold = config.compressionThreshold || this.defaultConfig.compressionThreshold;
+        if (config.cacheCompression && dataSize > compressionThreshold) {
+            const compressed = this.compressText(dataString, {
+                removeWhitespace: true,
+                removeRedundancy: true,
+                shortenWords: true
+            });
+
+            if (compressed.compressed) {
+                this.compressedCache.set(key, {
+                    data: compressed.text,
+                    compressed: true,
+                    originalSize: dataSize,
+                    compressedSize: compressed.compressedSize,
+                    timestamp: Date.now()
+                });
+                this.cacheStats.compressions++;
+                this.cacheStats.compressedSize += compressed.compressedSize;
+            } else {
+                this.contextCache.set(key, {
+                    data: dataString,
+                    compressed: false,
+                    originalSize: dataSize,
+                    compressedSize: dataSize,
+                    timestamp: Date.now()
+                });
+            }
+        } else {
+            this.contextCache.set(key, {
+                data: dataString,
+                compressed: false,
+                originalSize: dataSize,
+                compressedSize: dataSize,
+                timestamp: Date.now()
+            });
+        }
+
+        this.cacheStats.totalSize += dataSize;
+        this.enforceCacheSize();
+    }
+
+    /**
+     * Retrieve context from cache
+     * @param {string} key - Cache key
+     * @returns {Object|null} Cached data or null
+     */
+    getCachedContext(key) {
+        // Check compressed cache first
+        if (this.compressedCache.has(key)) {
+            this.cacheStats.hits++;
+            const cached = this.compressedCache.get(key);
+            return JSON.parse(cached.data);
+        }
+
+        // Check regular cache
+        if (this.contextCache.has(key)) {
+            this.cacheStats.hits++;
+            const cached = this.contextCache.get(key);
+            return JSON.parse(cached.data);
+        }
+
+        this.cacheStats.misses++;
+        return null;
+    }
+
+    /**
+     * Enforce cache size limits
+     */
+    enforceCacheSize() {
+        const maxSize = this.defaultConfig.maxCacheSize;
+        let currentSize = this.cacheStats.totalSize;
+
+        if (currentSize <= maxSize) return;
+
+        // Remove oldest entries from both caches
+        const allEntries = [
+            ...Array.from(this.contextCache.entries()).map(([key, value]) => ({
+                key,
+                value,
+                cache: 'context'
+            })),
+            ...Array.from(this.compressedCache.entries()).map(([key, value]) => ({
+                key,
+                value,
+                cache: 'compressed'
+            }))
+        ].sort((a, b) => a.value.timestamp - b.value.timestamp);
+
+        // Remove entries until under limit
+        for (const entry of allEntries) {
+            if (currentSize <= maxSize) break;
+
+            currentSize -= entry.value.originalSize;
+            this.cacheStats.totalSize -= entry.value.originalSize;
+
+            if (entry.cache === 'context') {
+                this.contextCache.delete(entry.key);
+            } else {
+                this.compressedCache.delete(entry.key);
+            }
+        }
     }
 
     /**
@@ -74,22 +547,36 @@ class PromptBuilder {
                         componentLengths: {},
                         buildTime: Date.now() - startTime,
                         cacheHit: false,
-                        timestamp: Date.now()
+                        timestamp: Date.now(),
+                        tokenCount: 0,
+                        optimizationStats: {}
                     },
                     components: {},
                     config: this.mergeConfig(options)
                 };
             }
+            
             // Merge options with defaults
             const config = this.mergeConfig(options);
             
             // Generate cache key
             const cacheKey = this.generateCacheKey(character, messages, contextPreset, config);
             
-            // Check cache first
+            // Check context cache first (Task 4.1.3)
+            if (config.contextCaching) {
+                const cachedContext = this.getCachedContext(cacheKey);
+                if (cachedContext) {
+                    this.stats.cacheHits++;
+                    this.stats.promptsBuilt++;
+                    this.stats.totalLength += cachedContext.content.length;
+                    this.stats.averageLength = this.stats.totalLength / this.stats.promptsBuilt;
+                    return cachedContext;
+                }
+            }
+            
+            // Check regular cache
             if (this.cacheEnabled && this.promptCache.has(cacheKey)) {
                 this.stats.cacheHits++;
-                // For test compatibility, count cache hits as prompt builds
                 this.stats.promptsBuilt++;
                 this.stats.totalLength += this.promptCache.get(cacheKey).content.length;
                 this.stats.averageLength = this.stats.totalLength / this.stats.promptsBuilt;
@@ -101,16 +588,63 @@ class PromptBuilder {
             // Build prompt components
             const components = await this.buildComponents(character, messages, contextPreset, config);
             
+            // Task 4.1.3: Apply content prioritization and token optimization
+            let optimizedComponents = components;
+            let optimizationStats = {};
+            
+            if (config.tokenCountingEnabled && config.tokenLimit) {
+                const totalTokens = Object.values(components).reduce((sum, content) => 
+                    sum + this.countTokens(content), 0);
+                
+                if (totalTokens > config.tokenLimit) {
+                    optimizedComponents = this.prioritizeContent(components, config.tokenLimit, config);
+                    optimizationStats = {
+                        originalTokens: totalTokens,
+                        finalTokens: Object.values(optimizedComponents).reduce((sum, content) => 
+                            sum + this.countTokens(content), 0),
+                        tokensRemoved: totalTokens - Object.values(optimizedComponents).reduce((sum, content) => 
+                            sum + this.countTokens(content), 0),
+                        optimizationApplied: true
+                    };
+                    this.stats.truncationCount++;
+                }
+            }
+            
             // Assemble final prompt
-            const prompt = await this.assemblePrompt(components, contextPreset, config, character);
+            const prompt = await this.assemblePrompt(optimizedComponents, contextPreset, config, character);
+            
+            // Task 4.1.3: Apply compression if enabled
+            let finalContent = prompt.content;
+            let compressionStats = {};
+            
+            if (config.compressionEnabled && finalContent.length > config.compressionThreshold) {
+                const compressionResult = this.compressText(finalContent, {
+                    removeWhitespace: true,
+                    removeRedundancy: true,
+                    shortenWords: true
+                });
+                
+                if (compressionResult.compressed) {
+                    finalContent = compressionResult.text;
+                    compressionStats = {
+                        compressed: true,
+                        originalSize: compressionResult.originalSize,
+                        compressedSize: compressionResult.compressedSize,
+                        compressionRatio: compressionResult.ratio,
+                        savings: compressionResult.savings
+                    };
+                    this.stats.compressionRatios.push(compressionResult.ratio);
+                }
+            }
             
             // Calculate statistics
-            const promptLength = prompt.content.length;
-            this.updateStats(promptLength);
+            const promptLength = finalContent.length;
+            const tokenCount = this.countTokens(finalContent);
+            this.updateStats(promptLength, tokenCount);
             
             // Create result object
             const result = {
-                content: prompt.content,
+                content: finalContent,
                 metadata: {
                     characterId: character?.id || character?.data?.name || 'unknown',
                     messageCount: messages.length,
@@ -119,15 +653,24 @@ class PromptBuilder {
                     componentLengths: prompt.componentLengths,
                     buildTime: Date.now() - startTime,
                     cacheHit: this.cacheEnabled && this.promptCache.has(cacheKey),
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    tokenCount: tokenCount,
+                    optimizationStats: {
+                        ...optimizationStats,
+                        compression: compressionStats
+                    }
                 },
-                components: components,
+                components: optimizedComponents,
                 config: config
             };
             
-            // Cache the result
+            // Cache the result (Task 4.1.3: Enhanced caching)
             if (this.cacheEnabled) {
                 this.cachePrompt(cacheKey, result);
+            }
+            
+            if (config.contextCaching) {
+                this.cacheContext(cacheKey, result, config);
             }
             
             // Emit event
@@ -136,7 +679,9 @@ class PromptBuilder {
                     characterId: character?.id || character?.data?.name || 'unknown',
                     messageCount: messages.length,
                     promptLength: promptLength,
-                    buildTime: result.metadata.buildTime
+                    buildTime: result.metadata.buildTime,
+                    tokenCount: tokenCount,
+                    optimizationApplied: optimizationStats.optimizationApplied || false
                 });
             }
             
@@ -757,11 +1302,16 @@ Keep responses engaging and appropriate to the context.`;
     /**
      * Update statistics
      * @param {number} promptLength - Prompt length
+     * @param {number} tokenCount - Token count of built prompt
      */
-    updateStats(promptLength) {
+    updateStats(promptLength, tokenCount = 0) {
         this.stats.promptsBuilt++;
         this.stats.totalLength += promptLength;
         this.stats.averageLength = this.stats.totalLength / this.stats.promptsBuilt;
+        
+        if (tokenCount > 0) {
+            this.stats.tokenCounts.push(tokenCount);
+        }
     }
 
     /**
@@ -769,11 +1319,27 @@ Keep responses engaging and appropriate to the context.`;
      * @returns {Object} Statistics
      */
     getStats() {
+        const avgTokens = this.stats.tokenCounts.length > 0 
+            ? this.stats.tokenCounts.reduce((sum, count) => sum + count, 0) / this.stats.tokenCounts.length 
+            : 0;
+        
+        const avgCompressionRatio = this.stats.compressionRatios.length > 0
+            ? this.stats.compressionRatios.reduce((sum, ratio) => sum + ratio, 0) / this.stats.compressionRatios.length
+            : 1.0;
+        
         return {
             ...this.stats,
             cacheSize: this.promptCache.size,
             cacheEnabled: this.cacheEnabled,
-            debugMode: this.debugMode
+            debugMode: this.debugMode,
+            averageTokens: Math.round(avgTokens * 100) / 100,
+            averageCompressionRatio: Math.round(avgCompressionRatio * 1000) / 1000,
+            contextCacheStats: this.cacheStats,
+            optimizationStats: {
+                truncationCount: this.stats.truncationCount,
+                compressionCount: this.stats.compressionRatios.length,
+                averageTokensPerPrompt: Math.round(avgTokens * 100) / 100
+            }
         };
     }
 
@@ -782,6 +1348,93 @@ Keep responses engaging and appropriate to the context.`;
      */
     clearCache() {
         this.promptCache.clear();
+    }
+
+    /**
+     * Clear context cache (Task 4.1.3)
+     */
+    clearContextCache() {
+        this.contextCache.clear();
+        this.compressedCache.clear();
+        this.cacheStats = {
+            hits: 0,
+            misses: 0,
+            compressions: 0,
+            totalSize: 0,
+            compressedSize: 0
+        };
+    }
+
+    /**
+     * Get context optimization statistics (Task 4.1.3)
+     * @returns {Object} Optimization statistics
+     */
+    getOptimizationStats() {
+        return {
+            tokenCounting: {
+                enabled: this.defaultConfig.tokenCountingEnabled,
+                method: this.defaultConfig.tokenEstimationMethod,
+                averageTokens: this.stats.tokenCounts.length > 0 
+                    ? this.stats.tokenCounts.reduce((sum, count) => sum + count, 0) / this.stats.tokenCounts.length 
+                    : 0,
+                totalTokenCounts: this.stats.tokenCounts.length
+            },
+            compression: {
+                enabled: this.defaultConfig.compressionEnabled,
+                threshold: this.defaultConfig.compressionThreshold,
+                averageRatio: this.stats.compressionRatios.length > 0
+                    ? this.stats.compressionRatios.reduce((sum, ratio) => sum + ratio, 0) / this.stats.compressionRatios.length
+                    : 1.0,
+                totalCompressions: this.stats.compressionRatios.length
+            },
+            truncation: {
+                enabled: this.defaultConfig.smartTruncation,
+                strategy: this.defaultConfig.truncationStrategy,
+                totalTruncations: this.stats.truncationCount
+            },
+            caching: {
+                contextEnabled: this.defaultConfig.contextCaching,
+                cacheCompression: this.defaultConfig.cacheCompression,
+                contextCacheSize: this.contextCache.size,
+                compressedCacheSize: this.compressedCache.size,
+                cacheStats: this.cacheStats
+            }
+        };
+    }
+
+    /**
+     * Set token counting method (Task 4.1.3)
+     * @param {string} method - Token counting method ('character', 'word', 'gpt2')
+     */
+    setTokenCountingMethod(method) {
+        if (!this.tokenCounters[method]) {
+            throw new Error(`Unknown token counting method: ${method}`);
+        }
+        this.defaultConfig.tokenEstimationMethod = method;
+    }
+
+    /**
+     * Set compression settings (Task 4.1.3)
+     * @param {boolean} enabled - Enable compression
+     * @param {number} threshold - Compression threshold
+     */
+    setCompressionSettings(enabled, threshold = null) {
+        this.defaultConfig.compressionEnabled = enabled;
+        if (threshold !== null) {
+            this.defaultConfig.compressionThreshold = threshold;
+        }
+    }
+
+    /**
+     * Set truncation strategy (Task 4.1.3)
+     * @param {string} strategy - Truncation strategy ('smart', 'end', 'start', 'middle')
+     */
+    setTruncationStrategy(strategy) {
+        const validStrategies = ['smart', 'end', 'start', 'middle'];
+        if (!validStrategies.includes(strategy)) {
+            throw new Error(`Invalid truncation strategy: ${strategy}`);
+        }
+        this.defaultConfig.truncationStrategy = strategy;
     }
 
     /**
