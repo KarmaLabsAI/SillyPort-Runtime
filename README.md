@@ -82,8 +82,8 @@ SillyTavernRuntime
 - [ ] Data Compression
 
 ### 📋 Phase 6: Testing & Polish (In Progress)
-- [x] Console Testing Interface
-- [x] Comprehensive Test Suite
+- [x] **Console Testing Interface** - Complete with STRuntime helper functions
+- [x] **Comprehensive Test Suite** - Complete with Node.js and browser tests
 - [ ] Performance Optimization
 - [ ] Documentation
 
@@ -101,6 +101,7 @@ The project has extensive test coverage with:
 - ✅ **PromptBuilder**: Context assembly and optimization tests
 - ✅ **OpenAIConverter**: ChatML format conversion tests
 - ✅ **AnthropicConverter**: Claude format conversion tests (32 tests)
+- ✅ **Console API**: STRuntime helper functions and browser testing
 
 ### Running Tests
 
@@ -124,6 +125,7 @@ The project uses a compartmentalized testing approach:
 - **Node.js Tests** (`tests/node/`): Run with Jest, use mocks for browser APIs
 - **Browser Tests** (`browser-tests.html`): Require real browser APIs (IndexedDB, localStorage)
 - **Browser Bundle** (`dist/sillyport-runtime.browser.js`): All classes exposed globally for browser testing
+- **Console API Tests** (`test-browser-bundle.html`): Automated verification of STRuntime helper functions
 
 ### Browser Testing
 
@@ -144,6 +146,42 @@ For tests that require real browser APIs:
    - ChatManager (with storage)
    - CharacterCard (PNG parsing)
    - FormatImporter (multi-format support)
+   - **STRuntime Console API** (helper functions verification)
+
+### Console API Testing
+
+The runtime provides a comprehensive console API for easy testing and development:
+
+```javascript
+// Initialize runtime
+await STRuntime.init();
+
+// Load test character from URL
+const character = await STRuntime.loadCharacterFromURL('test-data/characters/default_Seraphina.png');
+
+// Load preset collections
+const contextPresets = await STRuntime.loadPresetsFromURL('test-data/presets/context/');
+const instructPresets = await STRuntime.loadPresetsFromURL('test-data/presets/instruct/');
+
+// Create test chat session
+await STRuntime.createTestChat();
+
+// Get runtime statistics
+const stats = STRuntime.getStats();
+
+// Enable debug mode
+STRuntime.setDebugMode(true);
+```
+
+**Available Console Helper Functions:**
+- `STRuntime.init(config)` - Initialize the runtime
+- `STRuntime.loadCharacterFromURL(url)` - Load character from URL
+- `STRuntime.loadPresetsFromURL(directory)` - Load preset collections
+- `STRuntime.createTestChat()` - Create test chat session
+- `STRuntime.getStats()` - Get runtime statistics
+- `STRuntime.setDebugMode(enabled)` - Enable/disable debug mode
+- `STRuntime.destroy()` - Clean up runtime resources
+- `STRuntime.getRuntime()` - Get runtime instance
 
 ### Manual Console Testing
 
@@ -191,7 +229,7 @@ sillyport-runtime/
 │   │   └── index.js ✅              # Prompt module exports
 │   ├── memory/                      # Memory management (planned)
 │   ├── utils/                       # Utility functions (planned)
-│   └── index.js ✅                  # Main exports
+│   └── index.js ✅                  # Main exports with console helpers
 ├── tests/
 │   ├── node/                        # Node.js test suites
 │   │   ├── EventBus.simple.test.js ✅
@@ -203,7 +241,8 @@ sillyport-runtime/
 │   │   ├── FormatImporter.simple.test.js ✅
 │   │   ├── PromptBuilder.simple.test.js ✅
 │   │   ├── OpenAIConverter.simple.test.js ✅
-│   │   └── AnthropicConverter.simple.test.js ✅
+│   │   ├── AnthropicConverter.simple.test.js ✅
+│   │   └── ConsoleAPI.test.js ✅    # Console API tests
 │   └── core/                        # Core integration tests
 ├── test-data/                       # Comprehensive test resources
 │   ├── characters/
@@ -215,8 +254,9 @@ sillyport-runtime/
 │   ├── config/ ✅                   # Configuration templates
 │   └── assets/ ✅                   # Example assets
 ├── dist/
-│   └── sillyport-runtime.browser.js # Browser bundle
+│   └── sillyport-runtime.browser.js # Browser bundle with console helpers
 ├── browser-tests.html ✅            # Browser testing interface
+├── test-browser-bundle.html ✅      # Console API verification
 ├── .project/
 │   ├── spec/
 │   │   └── sillytavern-runtime-spec.md ✅ # Complete specification
@@ -234,6 +274,7 @@ sillyport-runtime/
 - **Format Support**: JSON, YAML, PNG metadata parsing, multi-format chat import
 - **Testing**: Jest for unit tests, browser console for integration
 - **Prompt Formats**: OpenAI ChatML, Anthropic Claude, custom templates
+- **Console API**: STRuntime helper functions for browser testing
 
 ## 📊 Test Data
 
@@ -284,32 +325,45 @@ The project includes comprehensive test data for development and validation:
    python3 -m http.server 8000
    
    # Open browser console and test:
-   const runtime = new SillyTavernRuntime();
-   await runtime.init();
+   await STRuntime.init();
+   const character = await STRuntime.loadCharacterFromURL('test-data/characters/default_Seraphina.png');
    ```
 
 ## 🎮 Console Testing
 
-The runtime is designed to be testable directly in the browser console:
+The runtime is designed to be testable directly in the browser console with the STRuntime helper functions:
 
 ```javascript
-// Initialize runtime
-const runtime = new SillyTavernRuntime();
-await runtime.init();
+// Initialize runtime using console helpers
+await STRuntime.init();
 
-// Load test character
+// Load test character using console helpers
+const character = await STRuntime.loadCharacterFromURL('test-data/characters/default_Seraphina.png');
+
+// Load preset collections
+const contextPresets = await STRuntime.loadPresetsFromURL('test-data/presets/context/');
+const instructPresets = await STRuntime.loadPresetsFromURL('test-data/presets/instruct/');
+
+// Create test chat session
+await STRuntime.createTestChat();
+
+// Get runtime statistics
+const stats = STRuntime.getStats();
+console.log('Runtime stats:', stats);
+
+// Test manual character loading
 const response = await fetch('test-data/characters/default_Seraphina.png');
 const blob = await response.blob();
-const character = await CharacterCard.fromPNG(blob);
+const characterCard = await CharacterCard.fromPNG(blob);
 
-// Create chat session
+// Test chat management
 const chatManager = new ChatManager(eventBus, stateManager);
-const chat = await chatManager.createChat(['user', character.data.name]);
+const chat = await chatManager.createChat(['user', characterCard.data.name]);
 
 // Test prompt building
 const promptBuilder = new PromptBuilder();
 const contextPreset = await fetch('test-data/presets/context/Default.json').then(r => r.json());
-const prompt = await promptBuilder.buildPrompt(character, [], contextPreset);
+const prompt = await promptBuilder.buildPrompt(characterCard, [], contextPreset);
 
 // Test format conversion
 const anthropicConverter = new AnthropicConverter(eventBus);
@@ -332,6 +386,7 @@ console.log('Claude format:', claudeFormat);
 - Console testing for manual validation
 - Performance tests for memory and speed
 - Browser compatibility testing
+- **Console API testing** with STRuntime helper functions
 
 ## 📖 Documentation
 
@@ -361,6 +416,6 @@ This project is part of the SillyTavern ecosystem and follows the same licensing
 
 ---
 
-**Status**: Phase 4 Complete - Core infrastructure, character system, chat system, and prompt system fully implemented and tested. Memory & Performance phase in progress.
+**Status**: Phase 6 Console Testing Interface Complete - Core infrastructure, character system, chat system, prompt system, and console API fully implemented and tested. Memory & Performance phase in progress.
 
 For detailed technical information, see the [specification document](.project/spec/sillytavern-runtime-spec.md). 
