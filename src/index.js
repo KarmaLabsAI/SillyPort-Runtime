@@ -17,6 +17,9 @@ const { CharacterCard, PNGMetadataExtractor } = require('./character');
 // Chat components
 const { FormatImporter } = require('./chat/FormatImporter');
 
+// Prompt components
+const { PromptBuilder } = require('./prompt');
+
 // Export main runtime class
 module.exports = {
     SillyTavernRuntime,
@@ -26,7 +29,8 @@ module.exports = {
     StorageManager,
     CharacterCard,
     PNGMetadataExtractor,
-    FormatImporter
+    FormatImporter,
+    PromptBuilder
 };
 
 // For browser environments, also attach to window
@@ -40,6 +44,7 @@ if (typeof window !== 'undefined') {
         StorageManager,
         CharacterCard,
         PNGMetadataExtractor,
-        FormatImporter
+        FormatImporter,
+        PromptBuilder
     };
 } 
