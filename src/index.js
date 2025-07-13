@@ -18,7 +18,7 @@ const { CharacterCard, PNGMetadataExtractor } = require('./character');
 const { FormatImporter } = require('./chat/FormatImporter');
 
 // Prompt components
-const { PromptBuilder, OpenAIConverter } = require('./prompt');
+const { PromptBuilder, OpenAIConverter, AnthropicConverter } = require('./prompt');
 
 // Export main runtime class
 module.exports = {
@@ -31,7 +31,8 @@ module.exports = {
     PNGMetadataExtractor,
     FormatImporter,
     PromptBuilder,
-    OpenAIConverter
+    OpenAIConverter,
+    AnthropicConverter
 };
 
 // For browser environments, also attach to window
@@ -47,6 +48,7 @@ if (typeof window !== 'undefined') {
         PNGMetadataExtractor,
         FormatImporter,
         PromptBuilder,
-        OpenAIConverter
+        OpenAIConverter,
+        AnthropicConverter
     };
 } 

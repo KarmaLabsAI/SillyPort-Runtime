@@ -6,8 +6,10 @@
 
 const PromptBuilder = require('./PromptBuilder.js');
 const OpenAIConverter = require('./OpenAIConverter.js');
+const AnthropicConverter = require('./AnthropicConverter.js');
 
 module.exports = {
     PromptBuilder,
-    OpenAIConverter
+    OpenAIConverter,
+    AnthropicConverter
 }; 
