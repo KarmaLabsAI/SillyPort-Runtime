@@ -418,7 +418,10 @@ class PromptBuilder {
             // Instead, we'll use the new Compressor utility for proper data compression
             try {
                 const { compress } = require('../utils/Compressor.js');
-                const compressedData = await compress(dataString);
+                const compressedData = await compress(dataString, { 
+                    strategy: 'json',
+                    threshold: compressionThreshold
+                });
                 const compressedSize = new Blob([compressedData]).size;
                 
                 if (compressedSize < dataSize) {
@@ -476,7 +479,7 @@ class PromptBuilder {
             const cached = this.compressedCache.get(key);
             try {
                 const { decompress } = require('../utils/Compressor.js');
-                const decompressedData = await decompress(cached.data);
+                const decompressedData = await decompress(cached.data, { strategy: 'json' });
                 return JSON.parse(decompressedData);
             } catch (error) {
                 // Fallback to uncompressed data if decompression fails
