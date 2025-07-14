@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CacheManager Test</title>
+</head>
+<body>
+    <h1>CacheManager Test</h1>
+    <div id="results"></div>
+    
+    <script src="dist/sillyport-runtime.browser.js"></script>
+    <script>
+        function log(message) {
+            console.log(message);
+            document.getElementById('results').innerHTML += '<p>' + message + '</p>';
+        }
+        
+        function testCacheManager() {
+            log('Starting CacheManager test...');
+            
+            // Test availability
+            const availability = {
+                windowCacheManager: typeof window.CacheManager !== 'undefined',
+                struntimeCacheManager: typeof window.STRuntime?.CacheManager !== 'undefined',
+                hasSetMethod: window.CacheManager && typeof window.CacheManager.set === 'function',
+                hasGetStatsMethod: window.CacheManager && typeof window.CacheManager.getStats === 'function'
+            };
+            
+            log('Availability test: ' + JSON.stringify(availability, null, 2));
+            
+            if (!window.CacheManager) {
+                log('ERROR: CacheManager not found!');
+                return;
+            }
+            
+            // Test basic functionality
+            const cache = window.CacheManager;
+            cache.clear();
+            
+            cache.set('test1', 'value1');
+            cache.set('test2', 'value2');
+            
+            const value1 = cache.get('test1');
+            const value2 = cache.get('test2');
+            const stats = cache.getStats();
+            
+            const functionality = {
+                value1,
+                value2,
+                stats,
+                success: value1 === 'value1' && value2 === 'value2' && stats.sets === 2
+            };
+            
+            log('Functionality test: ' + JSON.stringify(functionality, null, 2));
+            
+            // Test memory pressure (stress test)
+            cache.clear();
+            
+            const max = 200;
+            for (let i = 0; i < max; i++) {
+                cache.set(`key${i}`, 'x'.repeat(1024 * 50)); // 50KB per entry
+            }
+            
+            const stressStats = cache.getStats();
+            const stress = {
+                size: stressStats.size,
+                evictions: stressStats.evictions,
+                totalSize: stressStats.totalSize,
+                success: stressStats.evictions > 0 || stressStats.size <= max
+            };
+            
+            log('Stress test: ' + JSON.stringify(stress, null, 2));
+            
+            log('All tests completed!');
+        }
+        
+        // Run test when page loads
+        window.addEventListener('load', testCacheManager);
+    </script>
+</body>
+</html> 

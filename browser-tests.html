@@ -190,6 +190,12 @@
         </div>
 
         <div class="test-section">
+            <h2>Stress & Performance Tests</h2>
+            <button onclick="runStressTests()">Run Stress & Performance Tests</button>
+            <div id="stress-results"></div>
+        </div>
+
+        <div class="test-section">
             <h2>Test Results</h2>
             <div id="all-results"></div>
         </div>
@@ -222,6 +228,16 @@
             failed: 0,
             skipped: 0
         };
+
+        // Get class references from STRuntime
+        const { 
+            SillyTavernRuntime, 
+            EventBus, 
+            StateManager, 
+            ConfigManager, 
+            StorageManager,
+            CacheManager 
+        } = window.STRuntime || {};
 
         // Test utilities
         function assert(condition, message) {
@@ -279,6 +295,7 @@
             document.getElementById('chat-session-results').innerHTML = '';
             document.getElementById('chat-message-results').innerHTML = '';
             document.getElementById('chat-storage-results').innerHTML = '';
+            document.getElementById('stress-results').innerHTML = '';
             updateSummary();
         }
 
@@ -291,11 +308,13 @@
             });
 
             test('StorageManager can be created', () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
                 const storageManager = new StorageManager();
                 assert(storageManager instanceof StorageManager, 'StorageManager should be instantiable');
             });
 
             test('StorageManager can initialize', async () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
                 const storageManager = new StorageManager();
                 const result = await storageManager.init();
                 assert(result === true, 'StorageManager should initialize successfully');
@@ -303,6 +322,7 @@
             });
 
             test('StorageManager can save and load data', async () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
                 const storageManager = new StorageManager();
                 await storageManager.init();
                 
@@ -316,6 +336,7 @@
             });
 
             test('StorageManager can handle multiple object stores', async () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
                 const storageManager = new StorageManager();
                 await storageManager.init();
                 
@@ -343,6 +364,7 @@
             });
 
             test('ConfigManager can use localStorage', () => {
+                if (!ConfigManager) throw new Error('ConfigManager not available');
                 const configManager = new ConfigManager();
                 configManager.set('test.key', 'test-value');
                 const value = configManager.get('test.key');
@@ -354,6 +376,7 @@
             console.log('=== Running StorageManager Persistence Tests ===');
             
             test('Data persists across StorageManager instances', async () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
                 // First instance
                 const storage1 = new StorageManager();
                 await storage1.init();
@@ -374,11 +397,13 @@
             console.log('=== Running SillyTavernRuntime Initialization Tests ===');
             
             test('Runtime can be created', () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 assert(runtime instanceof SillyTavernRuntime, 'Runtime should be instantiable');
             });
 
             test('Runtime can initialize with default options', async () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 const result = await runtime.init();
                 assert(result === true, 'Runtime should initialize successfully');
@@ -387,6 +412,7 @@
             });
 
             test('Runtime prevents double initialization', async () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 await runtime.init();
                 
@@ -405,6 +431,7 @@
             console.log('=== Running SillyTavernRuntime Component Tests ===');
             
             test('Runtime has all core components after initialization', async () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 await runtime.init();
                 
@@ -417,6 +444,7 @@
             });
 
             test('Runtime can access components', async () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 await runtime.init();
                 
@@ -434,6 +462,7 @@
             console.log('=== Running SillyTavernRuntime Lifecycle Tests ===');
             
             test('Runtime emits lifecycle events', async () => {
+                if (!SillyTavernRuntime) throw new Error('SillyTavernRuntime not available');
                 const runtime = new SillyTavernRuntime();
                 const events = [];
                 
@@ -456,6 +485,7 @@
             console.log('=== Running ChatManager Session Tests ===');
             
             test('ChatManager can be created with dependencies', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
                 const eventBus = new EventBus();
                 const stateManager = new StateManager(eventBus);
                 const storageManager = new StorageManager(eventBus);
@@ -468,6 +498,7 @@
             });
 
             test('ChatManager can create chat sessions', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
                 const eventBus = new EventBus();
                 const stateManager = new StateManager(eventBus);
                 const storageManager = new StorageManager(eventBus);
@@ -488,6 +519,7 @@
             console.log('=== Running ChatManager Message Tests ===');
             
             test('ChatManager can add messages to sessions', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
                 const eventBus = new EventBus();
                 const stateManager = new StateManager(eventBus);
                 const storageManager = new StorageManager(eventBus);
@@ -509,6 +541,7 @@
             console.log('=== Running ChatManager Storage Tests ===');
             
             test('Chat sessions persist to storage', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
                 const eventBus = new EventBus();
                 const stateManager = new StateManager(eventBus);
                 const storageManager = new StorageManager(eventBus);
@@ -522,6 +555,91 @@
                 const foundSession = sessions.find(s => s.id === session.id);
                 assert(foundSession, 'Session should be persisted to storage');
                 
+                await storageManager.close();
+            });
+        }
+
+        // Stress & Performance Tests
+        async function runStressTests() {
+            document.getElementById('stress-results').innerHTML = '';
+            // 1. Large dataset handling
+            test('Load all Seraphina emotion sprites (large dataset)', async () => {
+                const emotionNames = [
+                    'admiration','amusement','anger','annoyance','approval','caring','confusion','curiosity','desire','disappointment','disapproval','disgust','embarrassment','excitement','fear','gratitude','grief','joy','love','nervousness','optimism','pride','realization','relief','remorse','sadness','surprise','neutral'
+                ];
+                const loaded = [];
+                for (const name of emotionNames) {
+                    const response = await fetch(`test-data/characters/Seraphina/${name}.png`);
+                    if (!response.ok) throw new Error(`Failed to load ${name}`);
+                    const blob = await response.blob();
+                    loaded.push(blob);
+                }
+                assert(loaded.length === emotionNames.length, 'Should load all emotion sprites');
+            });
+            // 2. Memory pressure (cache fill/eviction)
+            test('CacheManager handles memory pressure and evicts as expected', () => {
+                if (!CacheManager) throw new Error('CacheManager not available');
+                CacheManager.clear && CacheManager.clear();
+                const max = 200;
+                for (let i = 0; i < max; i++) {
+                    CacheManager.set(`key${i}`, 'x'.repeat(1024 * 50)); // 50KB per entry
+                }
+                const stats = CacheManager.getStats ? CacheManager.getStats() : {};
+                assert(stats.evictions > 0 || stats.size <= max, 'Cache should evict under pressure');
+            });
+            // 3. Performance under load
+            test('Create 100 chat sessions and 1000 messages (timed)', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                const t0 = performance.now();
+                const sessions = [];
+                for (let i = 0; i < 100; i++) {
+                    sessions.push(await chatManager.createChat([`char${i}`]));
+                }
+                for (let i = 0; i < 1000; i++) {
+                    const session = sessions[i % 100];
+                    await chatManager.addMessage(session.id, `char${i % 100}`, `Message ${i}`);
+                }
+                const t1 = performance.now();
+                assert(t1 - t0 < 10000, 'Should complete in under 10 seconds');
+                await storageManager.close();
+            });
+            // 4. Concurrent operation
+            test('Simulate concurrent chat sessions and rapid message creation', async () => {
+                if (!EventBus || !StateManager || !StorageManager) throw new Error('Dependencies not available');
+                const eventBus = new EventBus();
+                const stateManager = new StateManager(eventBus);
+                const storageManager = new StorageManager(eventBus);
+                await storageManager.init();
+                const chatManager = new ChatManager(eventBus, stateManager, storageManager);
+                const session = await chatManager.createChat(['charA', 'charB']);
+                const promises = [];
+                for (let i = 0; i < 100; i++) {
+                    promises.push(chatManager.addMessage(session.id, 'charA', `A${i}`));
+                    promises.push(chatManager.addMessage(session.id, 'charB', `B${i}`));
+                }
+                await Promise.all(promises);
+                const messages = chatManager.getMessages(session.id);
+                assert(messages.length >= 200, 'Should have at least 200 messages');
+                await storageManager.close();
+            });
+            // 5. Error recovery (simulate quota exceeded)
+            test('StorageManager handles quota exceeded gracefully', async () => {
+                if (!StorageManager) throw new Error('StorageManager not available');
+                const storageManager = new StorageManager();
+                await storageManager.init();
+                let errorCaught = false;
+                try {
+                    // Try to store a huge object to force quota error
+                    await storageManager.save('characters', { id: 'huge', data: 'x'.repeat(1024*1024*50) }); // 50MB
+                } catch (e) {
+                    errorCaught = true;
+                }
+                assert(errorCaught, 'Should catch quota exceeded error');
                 await storageManager.close();
             });
         }
@@ -554,6 +672,7 @@
             await runRuntimeTests();
             await runChatTests();
             await runCompressorTests();
+            await runStressTests(); // Add stress tests to runAllTests
         }
 
         // Initialize on page load

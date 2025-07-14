@@ -13,7 +13,7 @@
     "test:node": "npm test",
     "test:node:watch": "npm run test:watch",
     "test:node:coverage": "npm run test:coverage",
-    "build": "echo 'Build process not yet implemented'",
+    "build": "webpack --config webpack.config.js",
     "dev": "echo 'Development server not yet implemented'"
   },
   "keywords": [
@@ -27,8 +27,14 @@
   "author": "KarmaLabsAI",
   "license": "MIT",
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "babel-loader": "^10.0.0",
     "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0"
+    "jest-environment-jsdom": "^29.7.0",
+    "puppeteer": "^24.12.1",
+    "webpack": "^5.100.1",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

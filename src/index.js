@@ -11,6 +11,7 @@ const ConfigManager = require('./core/ConfigManager');
 const StorageManager = require('./core/StorageManager');
 const SillyTavernRuntime = require('./core/SillyTavernRuntime');
 const MemoryManager = require('./memory/MemoryManager');
+const CacheManager = require('./memory/CacheManager');
 
 // Utility components
 const { compress, decompress } = require('./utils/Compressor');
@@ -38,6 +39,7 @@ module.exports = {
     OpenAIConverter,
     AnthropicConverter,
     MemoryManager,
+    CacheManager,
     compress,
     decompress
 };
@@ -62,6 +64,7 @@ if (typeof window !== 'undefined') {
         OpenAIConverter,
         AnthropicConverter,
         MemoryManager,
+        CacheManager, // <-- Add this line
         compress,
         decompress,
         
@@ -209,6 +212,8 @@ if (typeof window !== 'undefined') {
             }
         }
     };
+    // Also attach CacheManager directly for legacy/test compatibility
+    window.CacheManager = CacheManager;
     
     // Add some helpful console messages
     console.log('🚀 SillyTavern Runtime loaded!');
